@@ -9,7 +9,7 @@ export interface CommentReference {
   url?: string;
   match?: 'metadata' | 'title-artist-version-unverified';
   fetchedAt?: string;
-  excerpts?: Array<{ text: string; kind: 'hot' | 'recent'; likes: number }>;
+  excerpts?: Array<{ text: string; kind: 'hot' | 'recent' | 'rising'; likes: number }>;
 }
 export interface ArtistProfile {
   status: 'ok' | 'unavailable';
@@ -331,30 +331,78 @@ export function matchSong(track: Track, songs: Song[]): { song: Song; match: Non
   return best ? { song: best.song, match: best.match } : null;
 }
 
+/** 求赞、打卡、抢楼等没有信息量的评论：直接丢弃。 */
+const LOW_INFO = /(?:求|跪求|拜托|帮我|给).{0,5}(?:赞|顶|粉)|(?:点|刷|互).{0,2}(?:赞|顶)|赞我|顶我|互赞|互粉|送我上去|沙发|板凳|前排|打卡|签到|路过|水经验|经验\s*\+?\s*1|首评|抢前排/i;
+/** 只有一句泛泛夸奖、没有具体内容的评论。 */
+const EMPTY_PRAISE = /^(?:真好听|太好听|好好听|好听|好听哭了|神曲|经典|绝了|牛|牛逼|666|yyds|泪目|破防|开口跪|单曲循环|循环中|耳朵怀孕|爱了爱了|永远的神|天花板|神仙)[\s!！。.~～…]*$/i;
+const NOISE = /^(?:哈哈哈+|嘿嘿+|呵呵+|啊啊+|呜呜+|爱了|冒泡|水一下|第一次|第一|沙发|板凳|前排|\d+)[\s!！。.~～…]*$/i;
+const REPEAT = /(.)\1{4,}/;
+const meaningful = (text: string) => text.replace(/[\s\p{P}\p{S}]/gu, '').length;
+
+/** 信息量打分：叙事、乐评、背景、年份与转折加分，短泛评减分。 */
+export function informationScore(text: string): number {
+  const length = [...text].length;
+  let score = Math.min(5, length / 12);
+  if (/我|记得|那年|当时|第一次|后来|高中|大学|朋友|父亲|母亲|奶奶|爷爷|分手|结婚|婚礼|毕业|离开|回来/.test(text)) score += 3;
+  if (/编曲|和弦|副歌|主歌|旋律|节奏|唱功|音色|转音|混音|歌词|作词|作曲|bridge|beat/i.test(text)) score += 2.5;
+  if (/专辑|发行|电影|电视剧|动画|翻唱|原唱|背景|故事|MV|现场/i.test(text)) score += 2;
+  if (/\d{4}\s*年|\d{2,}/.test(text)) score += 1.5;
+  if (/但是|不过|其实|因为|所以|反而|感觉|像是|让我想起|好像/.test(text)) score += 1.5;
+  if (length < 12) score -= 1.5;
+  return score;
+}
+
+function droppable(text: string): boolean {
+  const core = meaningful(text);
+  if (core < 2) return true;
+  if (LOW_INFO.test(text) || EMPTY_PRAISE.test(text) || NOISE.test(text)) return true;
+  return REPEAT.test(text) && core <= 12;
+}
+
+interface CommentCandidate { text: string; kind: 'hot' | 'recent'; likes: number; order: number; score: number; rising: boolean }
+
 export function parseComments(raw: any, maxExcerpts = 10): NonNullable<CommentReference['excerpts']> {
   if (!Array.isArray(raw?.comments) && !Array.isArray(raw?.hotComments) && !Array.isArray(raw?.topComments)) throw new Error('评论接口返回格式不可用');
-  const total = Math.max(1, Math.min(20, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
-  const hotMax = Math.ceil(total * 0.6);
+  const total = Math.max(1, Math.min(50, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
   const seen = new Set<string>();
-  const out: NonNullable<CommentReference['excerpts']> = [];
-  const informative = (text: string) => /\p{L}/u.test(text) && text.replace(/[\s\p{P}\p{S}]/gu, '').length >= 2;
-  const hot = [...(Array.isArray(raw.topComments) ? raw.topComments : []), ...(Array.isArray(raw.hotComments) ? raw.hotComments : [])];
-  const take = (values: any, max: number, kind: 'hot' | 'recent') => {
-    let count = 0;
+  const candidates: CommentCandidate[] = [];
+  const add = (values: any, kind: 'hot' | 'recent') => {
     for (const c of Array.isArray(values) ? values : []) {
-      if (count >= max) break;
       const text = clean(c?.content);
-      if (!text || !informative(text) || seen.has(text)) continue;
+      if (!text || droppable(text) || seen.has(text)) continue;
       seen.add(text);
-      out.push({ text, kind, likes: Number.isFinite(c.likedCount) ? Math.max(0, c.likedCount) : 0 });
+      candidates.push({ text, kind, likes: Number.isFinite(c.likedCount) ? Math.max(0, c.likedCount) : 0, order: candidates.length, score: 0, rising: false });
+    }
+  };
+  add([...(Array.isArray(raw.topComments) ? raw.topComments : []), ...(Array.isArray(raw.hotComments) ? raw.hotComments : [])], 'hot');
+  add(raw.comments, 'recent');
+
+  // 最新列表里点赞最高的几条：既新又有共鸣，单独标记并加权。
+  const risingMax = Math.max(1, Math.ceil(total * 0.1));
+  const rising = new Set(candidates.filter(c => c.kind === 'recent').sort((a, b) => b.likes - a.likes)
+    .slice(0, risingMax).filter(c => c.likes >= 3));
+  for (const c of candidates) {
+    c.rising = rising.has(c);
+    c.score = informationScore(c.text) + Math.min(6, Math.log2(1 + c.likes)) + (c.kind === 'hot' ? 1 : 0) + (c.rising ? 3 : 0);
+  }
+
+  const picked: CommentCandidate[] = [];
+  const take = (list: CommentCandidate[], max: number) => {
+    let count = 0;
+    for (const c of [...list].sort((a, b) => b.score - a.score || a.order - b.order)) {
+      if (count >= max || picked.length >= total) break;
+      if (picked.includes(c)) continue;
+      picked.push(c);
       count++;
     }
-    return count;
   };
-  const hotCount = take(hot, hotMax, 'hot');
-  // Fill the requested total with recent comments even when hot comments are fewer than planned.
-  take(raw.comments, total - hotCount, 'recent');
-  return out;
+  const hotQuota = Math.ceil(total * 0.6);
+  take([...rising], Math.max(1, risingMax));
+  take(candidates.filter(c => c.kind === 'hot'), hotQuota);
+  take(candidates.filter(c => c.kind === 'recent'), total);
+  take(candidates.filter(c => c.kind === 'hot'), total);
+  return picked.sort((a, b) => b.score - a.score || a.order - b.order)
+    .map(c => ({ text: c.text, kind: c.rising ? 'rising' as const : c.kind, likes: c.likes }));
 }
 
 export class NeteaseComments implements CommentProvider {
@@ -538,8 +586,24 @@ export class NeteaseComments implements CommentProvider {
     }
     return result;
   }
+  /** 条数较多时翻页取候选：接口单页最多 100 条，过滤后仍要尽量凑够目标条数。 */
+  private async commentPages(songId: number, total: number, signal?: AbortSignal): Promise<any> {
+    const size = total > 20 ? 100 : Math.max(5, total);
+    const pages = total > 20 ? 2 : 1;
+    let merged: any = null;
+    const comments: any[] = [];
+    for (let page = 0; page < pages; page++) {
+      const data = await this.json(`/api/v1/resource/comments/R_SO_4_${songId}?limit=${size}&offset=${page * size}`, signal);
+      merged ??= { ...data, comments: [] };
+      if (Array.isArray(data.hotComments)) merged.hotComments = data.hotComments;
+      if (Array.isArray(data.topComments)) merged.topComments = data.topComments;
+      if (Array.isArray(data.comments)) comments.push(...data.comments);
+      if (!data.more || !Array.isArray(data.comments) || data.comments.length < size) break;
+    }
+    return { ...merged, comments };
+  }
   async get(track: Track, signal?: AbortSignal, maxExcerpts = 10): Promise<CommentReference> {
-    const total = Math.max(1, Math.min(20, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
+    const total = Math.max(1, Math.min(50, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
     const key = trackKey(track) + ':' + total, cached = this.cache.get(key);
     signal?.throwIfAborted();
     if (cached && cached.until > Date.now()) return cached.result;
@@ -550,7 +614,7 @@ export class NeteaseComments implements CommentProvider {
       let last: RankedSong | null = null;
       for (const candidate of found.slice(0, 2)) {
         last = candidate;
-        const excerpts = parseComments(await this.json(`/api/v1/resource/comments/R_SO_4_${candidate.song.id}?limit=${Math.max(5, total)}&offset=0`, signal), total);
+        const excerpts = parseComments(await this.commentPages(candidate.song.id, total, signal), total);
         if (excerpts.length) {
           result = { status: 'ok', song: candidate.song, url: `https://music.163.com/song?id=${candidate.song.id}`,
             match: candidate.match, fetchedAt: new Date().toISOString(), excerpts };

@@ -21,14 +21,14 @@ export function commentLimits(cfg: MusicConfig): { maxChars: number; intervalSec
   const bounded = (value: number, fallback: number, min: number, max: number) =>
     Number.isFinite(value) ? Math.floor(Math.max(min, Math.min(max, value))) : fallback;
   return { maxChars: bounded(cfg.maxCommentChars, 80, 10, 500), intervalSeconds: bounded(cfg.cooldownSeconds, 120, 30, 3600),
-    excerpts: bounded(cfg.commentExcerpts, 10, 3, 20) };
+    excerpts: bounded(cfg.commentExcerpts, 10, 3, 50) };
 }
 export const configGroup: ConfigGroup = {
   id: 'world:netease-music', owner: 'world:netease-music', schema: {
     type: 'object', title: '一起听 · 网易云音乐', properties: {
       'worlds.netease-music.commentReference': { type: 'boolean', title: '参考网易云评论区（联网）', 'x-hot': true },
       'worlds.netease-music.artistContext': { type: 'boolean', title: '联网搜索歌手背景资料', description: '开启后读取网易云歌手简介、代表作品与专辑，并补充百度百科概述和 Discogs 社区档案；与「参考网易云评论区」相互独立。', 'x-hot': true },
-      'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–20，默认 10。热门约占六成，其余为最新；条数越多上下文越长。', minimum: 3, maximum: 20, 'x-hot': true },
+      'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–50，默认 10。会先过滤求赞、打卡等低信息评论，再按信息量、点赞和新鲜度排序；条数越多上下文越长。', minimum: 3, maximum: 50, 'x-hot': true },
       'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
       'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },
       'worlds.netease-music.cooldownSeconds': { type: 'integer', title: '主动评论最短间隔（秒）', description: '30–3600 秒。间隔越大评论越少；仅在曲目稳定且满足间隔时触发，不是定时重复评论。', minimum: 30, maximum: 3600, 'x-hot': true },

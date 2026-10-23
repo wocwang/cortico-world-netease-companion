@@ -133,7 +133,7 @@ test('搜索只返回翻唱时，通过歌手目录找到原曲并取评论', as
   assert.equal(result.status, 'ok');
   assert.equal(result.song?.id, 186016);
   assert.equal(result.match, 'metadata');
-  assert.deepEqual(result.excerpts?.map(e => e.text), ['从前从前有个人爱你很久', '雨下整夜', '还要多久我才能在你身边']);
+  assert.deepEqual(result.excerpts?.map(e => e.text), ['从前从前有个人爱你很久', '还要多久我才能在你身边', '雨下整夜']);
   assert.ok(calls.some(c => c.includes('offset=50')));
   assert.ok(calls.some(c => c.includes('type=100')));
   assert.ok(calls.some(c => c.includes('/api/v1/artist/songs')));
@@ -169,21 +169,26 @@ test('parseComments 优先填满热门，然后用最新补到总数', () => {
   assert.equal(excerpts.filter(e => e.kind === 'recent').length, 5);
 });
 
-test('parseComments 过滤无意义评论：纯表情、短文本', () => {
+test('parseComments 过滤求赞、纯表情与泛泛短评，保留有信息量的评论', () => {
   const excerpts = parseComments({
     hotComments: [
       { content: '👍', likedCount: 9 },
       { content: '666', likedCount: 9 },
+      { content: '求赞，送我上去', likedCount: 8 },
       { content: '真好听', likedCount: 5 },
+      { content: '那年高考完的夏天，我在出租车上第一次听到这首歌，现在每次前奏响起都会想起那个下午。', likedCount: 3 },
     ],
     comments: [
       { content: '🙏', likedCount: 1 },
       { content: '沙发', likedCount: 1 },
       { content: '前排占座', likedCount: 1 },
+      { content: '副歌的弦乐编曲比原版更克制，和歌词里的情绪很搭。', likedCount: 1 },
     ],
   }, 4);
-  // 纯表情和纯数字被跳过，保留能提供信息的短评。
-  assert.deepEqual(excerpts.map(e => e.text), ['真好听', '沙发', '前排占座']);
+  assert.deepEqual(excerpts.map(e => e.text), [
+    '那年高考完的夏天，我在出租车上第一次听到这首歌，现在每次前奏响起都会想起那个下午。',
+    '副歌的弦乐编曲比原版更克制，和歌词里的情绪很搭。',
+  ]);
 });
 
 
@@ -194,8 +199,54 @@ test('评论条数按配置抓取且热门约占六成', () => {
   assert.equal(excerpts.length, 10);
   assert.equal(excerpts.filter(e => e.kind === 'hot').length, 6);
   assert.equal(excerpts.filter(e => e.kind === 'recent').length, 4);
-  assert.equal(excerpts[0].text, 'hot-0');
-  assert.equal(excerpts.at(-1)?.text, 'recent-3');
+  assert.equal(excerpts[0].kind, 'hot');
+  assert.equal(excerpts.at(-1)?.kind, 'recent');
+});
+
+test('评论上限为 50 条', () => {
+  const comments = Array.from({ length: 60 }, (_, i) => ({
+    content: `第 ${i} 年夏天我在不同城市听到这首歌，每次都想起当时的朋友和街道。`, likedCount: i,
+  }));
+  const excerpts = parseComments({ comments }, 80);
+  assert.equal(excerpts.length, 50);
+});
+
+test('评论条数超过 20 时翻页取更多候选', async () => {
+  const calls: string[] = [];
+  const page = (offset: number) => Array.from({ length: 100 }, (_, i) => ({
+    content: `第 ${offset + i} 年夏天我在不同城市听到这首歌，每次都想起当时的朋友和街道。`, likedCount: offset + i,
+  }));
+  const fake: typeof fetch = async input => {
+    const url = new URL(String(input));
+    calls.push(url.pathname + url.search);
+    const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+    if (url.pathname === '/api/search/get') {
+      return reply({ code: 200, result: { songCount: 1, songs: [{ id: 11, name: '晴天', artists: [{ name: '周杰伦' }], album: { name: '叶惠美' } }] } });
+    }
+    if (url.pathname === '/api/v1/resource/comments/R_SO_4_11') {
+      const offset = Number(url.searchParams.get('offset') ?? 0);
+      return reply({ code: 200, more: offset === 0, hotComments: [], comments: page(offset) });
+    }
+    return new Response('not found', { status: 404 });
+  };
+  const result = await new NeteaseComments(fake).get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 30);
+  assert.equal(result.excerpts?.length, 30);
+  assert.ok(calls.some(c => c.includes('offset=100')));
+});
+
+test('最新评论里点赞最高的几条标记为 rising 并优先于普通最新评论', () => {
+  const excerpts = parseComments({
+    hotComments: [{ content: '主歌的吉他分解很干净，副歌进来时层次一下打开，录音版本比现场更克制。', likedCount: 2 }],
+    comments: [
+      { content: '高考完那个暑假在网吧第一次听到，后来每次加班到深夜都会放这首。', likedCount: 8 },
+      { content: '今天才知道这首歌是 2003 年发行的，专辑封面也很有年代感。', likedCount: 2 },
+      { content: '路过', likedCount: 0 },
+    ],
+  }, 5);
+  const kinds = excerpts.map(e => e.kind);
+  assert.ok(kinds.includes('rising'));
+  assert.ok(kinds.indexOf('rising') < kinds.indexOf('recent'));
+  assert.equal(excerpts.find(e => e.kind === 'rising')?.likes, 8);
 });
 
 test('置顶评论优先计入热门，重复文本只保留一次', () => {
@@ -211,10 +262,10 @@ test('评论接口格式异常时抛出可降级错误', () => {
   assert.throws(() => parseComments({}), /评论接口返回格式不可用/);
 });
 
-test('评论条数配置限制在 3–20，缺省回退 10', () => {
+test('评论条数配置限制在 3–50，缺省回退 10', () => {
   const cfg = defaults();
   cfg.commentExcerpts = 100;
-  assert.equal(commentLimits(cfg).excerpts, 20);
+  assert.equal(commentLimits(cfg).excerpts, 50);
   cfg.commentExcerpts = 2;
   assert.equal(commentLimits(cfg).excerpts, 3);
   cfg.commentExcerpts = Number.NaN;
