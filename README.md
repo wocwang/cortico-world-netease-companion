@@ -107,3 +107,5 @@ npm pack
 `check` 使用 Cortico 自己的 manifest 解析器、dry-mount 和 describe 校验函数，验证构造、工具、配置归属与自描述一致性；它不启动桌宠或发送模型请求。`diagnose` 是本机音乐读取检查。完整桌宠发言效果仍需启用 World 后联调。
 
 依据：[官方扩展安装与更新规范](https://github.com/Pal-AI-Lab/Cortico/blob/main/docs/extensions.md)、[官方 World 模板](https://github.com/Pal-AI-Lab/Cortico/tree/main/templates/extension/world)、[World 公共契约](https://github.com/Pal-AI-Lab/Cortico/blob/main/src/core/types.ts)。
+
+本项目是原作者 oceanxuhaiao 的「一起听 · 网易云音乐」源码分支（MIT），0.4.0 起的识别范围与 0.5.0 的歌手资料由本仓库维护；原始作者信息保留在 [package.json](package.json) 与 [LICENSE](LICENSE)。
