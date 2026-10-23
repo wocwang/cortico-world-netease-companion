@@ -18,7 +18,7 @@ const parsed = manifest.parseExtensionManifest(pkg);
 if (!parsed.ok) throw new Error(JSON.stringify(parsed));
 const scratchDir = await mkdtemp(join(tmpdir(), 'netease-host-check-'));
 try {
-  const opts = { scratchDir, packageDir: resolve('.') };
+  const opts = { scratchDir, packageDir: resolve('.'), hasWebUiClient: parsed.manifest.webUiClient !== undefined };
   const reports = [await dryMountWorld(definition, opts), await checkDescribe('world', definition, 'describe.json', opts)];
   console.log(JSON.stringify({ coopanionVersion: app.version, worldApi: manifest.EXTENSION_API_VERSIONS.world, reports }, null, 2));
   if (reports.some(r => r.failures.length)) process.exitCode = 1;

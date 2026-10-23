@@ -35,15 +35,35 @@ export class MusicWorld implements World {
   envPromptVars(): Record<string, string> { return { 'music.maxChars': String(commentLimits(this.cfg).maxChars), 'music.commentExcerpts': String(commentLimits(this.cfg).excerpts), 'music.artistContext': this.artistEnabled() ? '开启' : '关闭' }; }
   private referenceEnabled(): boolean { return this.cfg.commentReference !== false; }
   private artistEnabled(): boolean { return this.cfg.artistContext !== false; }
+  private readingLabel(): string {
+    return this.error || (!this.state.current ? '等待网易云音乐（未打开或无曲目）' :
+      Date.now() - this.state.observedAt > 10_000 ? '信息过期，等待重连' : this.state.current.status === 'paused' ? '已暂停' : this.state.current.method);
+  }
   webUi(): WorldWebUiDecl {
     return {
       config: [configGroup],
-      badges: [{ label: '读取状态', value: this.error || (!this.state.current ? '等待网易云音乐（未打开或无曲目）' :
-        Date.now() - this.state.observedAt > 10_000 ? '信息过期，等待重连' : this.state.current.status === 'paused' ? '已暂停' : this.state.current.method) },
+      badges: [{ label: '读取状态', value: this.readingLabel() },
         { label: '当前曲目', value: this.state.current?.title || '无' },
         { label: '陪听', value: this.cfg.commentary ? '开启' : '安静' },
         { label: '评论区', value: this.lastReference }, { label: '歌手资料', value: this.artistEnabled() ? this.lastArtist : '已关闭' },
         { label: '本次已请求评论', value: this.requests }],
+      // 顶部徽章只在宿主开页/刷新时取，这个面板让状态在打开期间每 2 秒自行更新。
+      panels: [{ id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' }],
+      invoke: async (panel, method) => {
+        if (panel !== 'live-status' || method !== 'snapshot') throw new Error('未知的状态请求');
+        return {
+          reading: this.readingLabel(),
+          track: this.state.current ? `${this.state.current.title}${this.state.current.artist ? ' - ' + this.state.current.artist : ''}` : '无',
+          playback: this.state.current?.status ?? 'unknown',
+          method: this.state.current?.method ?? '',
+          commentary: this.cfg.commentary ? '开启' : '安静',
+          comment: this.lastReference,
+          artist: this.artistEnabled() ? this.lastArtist : '已关闭',
+          requests: this.requests,
+          observedAt: this.state.observedAt ? new Date(this.state.observedAt).toISOString() : null,
+          error: this.error || null,
+        };
+      },
       promptDocs: [{ key: 'worlds.netease-music.envPrompt', title: '一起听 · 陪听指导', description: '曲目信息边界与评论节奏', role: 'envPrompt',
         path: fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url)), vars: [{ name: 'music.maxChars', description: '音乐评论最大字数，现读配置' },
           { name: 'music.commentExcerpts', description: '评论参考条数，现读配置' },
