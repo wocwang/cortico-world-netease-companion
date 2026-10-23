@@ -9,10 +9,8 @@
 ## 当前状态
 
 - 本分支版本：`1.0.0`，MIT，Windows，World API 6。
-- npm 上的 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有；本分支不能用同一包名发布。
-- 可选方案：
-  1. 改用自己账号下的名字，例如 `@wocwang/cortico-world-netease-companion`，`publishConfig.access` 已为 `public`。
-  2. 请原作者把 `wocwang` 加为 npm 维护者，继续使用原名发布。
+- 发布包名：`better-cortico-world-netease-companion`（已确认 npm 上无同名包），中文显示名仍为「一起听 · 网易云音乐」。
+- 原名 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有，不能覆盖。
 - 当前机器尚未登录 npm；发布前需要账号所有者执行 `npm login --auth-type=web`。
 
 ## 详情页展示从哪里来

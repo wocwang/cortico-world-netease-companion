@@ -32,7 +32,7 @@ Coopanion 的非官方 Cortico World 扩展。读取本机网易云音乐的曲�
 
 扩展 1.0.0 已针对 **Coopanion 0.2.8**（World API 6）校验。新版「输入气泡」开关仅影响用户输入气泡，音乐评论仍使用桌宠 `pet_say` 输出。已有音乐配置、World ID 和工具名均保持兼容，不需重装或重建配置；旧配置缺少「评论参考条数」时按默认 10 条处理，缺少「联网搜索歌手背景资料」或「联网搜索歌曲背景资料」时按开启处理。
 
-发布到 npm 后，在 Coopanion 高级模式 → 扩展 → World 搜索 `cortico-world-netease-companion` 安装，然后重启进程，在 World 总览启用「一起听 · 网易云音乐」。若搜索尚未收录，可在手动安装中输入完整包名。当前发布状态请以 npm registry 实际结果为准。
+发布到 npm 后，在 Coopanion 高级模式 → 扩展 → World 搜索 `better-cortico-world-netease-companion` 安装，然后重启进程，在 World 总览启用「一起听 · 网易云音乐」。若搜索尚未收录，可在手动安装中输入完整包名。当前发布状态请以 npm registry 实际结果为准。
 
 以下为源码本机安装方式：
 
@@ -101,7 +101,7 @@ World 配置页提供热更新开关和节奏设置。对应部署 `config.json`
 
 **本机目录安装**：宿主以 link 方式加载这个目录，不从 npm 查询更新。保留目录位置，替换该目录的新版源码，运行 `npm ci`、`npm run typecheck`、`npm test`、`npm run describe`、`npm run check`，然后在 Coopanion 重启进程。配置由宿主保存在部署目录，包更新不覆盖它。
 
-**npm 安装**：npm 上已有原作者发布的 0.3.2；本分支的 1.0.0 若以同一包名发布会被拒绝（包名归属原作者），需要换包名或由原作者添加维护者。发布到 npm 后，扩展详情页会读取 `repository`、`homepage`、`bugs` 显示「源代码仓库 / 项目主页 / 问题反馈」，标签来自 `cortico.tags` 与官方索引；评分和评论由扩展市场提供。安装发布版后，用户可在宿主扩展页安装包名；扩展页检查新版本、更新并重启加载。旧版本可从扩展详情选择回退，前提是其 API 契约兼容。发布者操作见 [维护说明](docs/PUBLISH.md)。
+**npm 安装**：本分支发布名为 `better-cortico-world-netease-companion`（原名 `cortico-world-netease-companion` 归原作者所有，0.3.2 已发布，不能覆盖）。发布后扩展详情页会读取 `repository`、`homepage`、`bugs` 显示「源代码仓库 / 项目主页 / 问题反馈」，标签来自 `cortico.tags` 与官方索引；评分和评论由扩展市场提供。安装发布版后，用户可在宿主扩展页安装包名；扩展页检查新版本、更新并重启加载。旧版本可从扩展详情选择回退，前提是其 API 契约兼容。发布者操作见 [维护说明](docs/PUBLISH.md)。
 
 使用公开 World 接口可减少宿主升级带来的影响，但不能保证未来破坏性契约变更无需适配。当前声明 `api: 6`，不兼容的宿主会由安装器拒绝。
 
