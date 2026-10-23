@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-netease-companion",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "网易云音乐陪听 World：本机曲目信息、切歌事件与节制的桌宠评论",
   "license": "MIT",
@@ -9,6 +9,9 @@
     "url": "git+https://github.com/wocwang/cortico-world-netease-companion.git"
   },
   "homepage": "https://github.com/wocwang/cortico-world-netease-companion",
+  "bugs": {
+    "url": "https://github.com/wocwang/cortico-world-netease-companion/issues"
+  },
   "keywords": [
     "cortico-world",
     "cortico",
@@ -27,11 +30,13 @@
     "api": 6,
     "displayName": "一起听 · 网易云音乐",
     "tags": [
+      "coopanion",
       "companion",
       "experimental",
       "sensitive-data",
       "external-setup",
-      "internet"
+      "internet",
+      "unofficial-api"
     ],
     "describe": "describe.json",
     "webUiClient": "webui/client.js"
@@ -67,7 +72,13 @@
     "access": "public"
   },
   "author": {
-    "name": "oceanxuhaiao",
-    "url": "https://github.com/oceanxuhaiao"
-  }
+    "name": "wocwang",
+    "url": "https://github.com/wocwang"
+  },
+  "contributors": [
+    {
+      "name": "oceanxuhaiao",
+      "url": "https://github.com/oceanxuhaiao"
+    }
+  ]
 }

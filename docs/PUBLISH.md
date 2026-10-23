@@ -1,33 +1,45 @@
 # 发布到 Coopanion 扩展市场
 
-扩展发布在 npm，Coopanion 市场通过 `cortico-world` keyword 发现它。官方索引提供额外的标签、自描述、讨论和认证信息；普通市场发现不等于官方认证。
+扩展发布在 npm，Coopanion 市场通过 `cortico-world` keyword 发现它。官方索引提供额外的标签、讨论和认证信息；普通市场发现不等于官方认证。
 
 官方依据：
 - https://github.com/Pal-AI-Lab/Cortico/blob/main/docs/extensions.md
 - https://github.com/Pal-AI-Lab/cortico-extensions/blob/main/README.md
 
-## 本次发布准备
+## 当前状态
 
-包名：`cortico-world-netease-companion`（准备时 registry 返回 404；最终是否可用以 publish 为准）。
-版本：`0.3.1`。许可证：MIT。支持平台：Windows。World API：6。
+- 本分支版本：`1.0.0`，MIT，Windows，World API 6。
+- npm 上的 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有；本分支不能用同一包名发布。
+- 可选方案：
+  1. 改用自己账号下的名字，例如 `@wocwang/cortico-world-netease-companion`，`publishConfig.access` 已为 `public`。
+  2. 请原作者把 `wocwang` 加为 npm 维护者，继续使用原名发布。
+- 当前机器尚未登录 npm；发布前需要账号所有者执行 `npm login --auth-type=web`。
 
-发布前还需要维护者提供 npm 用户名，以及 GitHub 用户名/源码仓库 URL。把真实作者、repository、bugs、homepage 写入 package.json；不要将他人账号或尚不存在的仓库写进去。
+## 详情页展示从哪里来
+
+市场详情页不是 GitHub 页面，而是从 npm 包文档和官方索引组合出来：
+
+- `repository` → 「源代码仓库」
+- `homepage` → 「项目主页」
+- `bugs` → 「问题反馈」
+- `displayName` → 扩展名；`description` → 简介
+- `author`、`license`、`version` → 信息区
+- `cortico.tags` → 标签，需与官方 index.json 词表对应
+- 「新品」、评分、评论、认证 → 官方索引与扩展市场登录状态
+
+因此把 `repository`、`homepage`、`bugs` 写成真实地址，发布后详情页就会出现 GitHub 仓库入口。
 
 ## 发布步骤
 
-1. 用维护者自己的账号在本机终端执行 `npm login --auth-type=web`，浏览器完成登录和 npm 要求的验证。不要把密码、验证码或访问令牌发到聊天或存入源码。
-2. `npm whoami` 核对发布账号。
-3. 设置真实作者与公开源码仓库链接，检查 README 对陌生用户可读，确认打包内容没有本机配置或凭据。
-4. 执行 `npm ci`、`npm run verify`、`npm publish --dry-run --access public`。
-5. 执行 `npm publish --access public`，由账号所有者完成必要的身份验证。
-6. `npm view cortico-world-netease-companion version` 确认 registry 中的版本。
-7. 在 Coopanion 扩展页刷新并搜索包名，验证安装、启用和更新入口。宿主可能有发布时间门槛，刚发布版本可能暂不作为默认版本。
-8. 如需立即同步官方索引，在 https://github.com/Pal-AI-Lab/cortico-extensions/issues/new 创建标题为 `[sync] cortico-world-netease-companion` 的 issue。正文可为空；这是索引同步，不是认证申请。
+1. `npm login --auth-type=web`，然后 `npm whoami` 核对账号。
+2. 确认包名可用：`npm view <包名> version` 应返回 404；若使用 scoped 名称，发布时带 `--access public`。
+3. 更新 `CHANGELOG.md` 与版本号，执行 `npm ci`、`npm run verify`、`npm publish --dry-run --access public`。
+4. `npm publish --access public`。
+5. 在 Coopanion 扩展页刷新并搜索包名，验证安装、启用、更新和回退入口。
+6. 如需立即同步官方索引，在 https://github.com/Pal-AI-Lab/cortico-extensions/issues/new 创建标题为 `[sync] <包名>` 的 issue；这是索引同步，不是认证申请。
 
 ## 以后更新
 
-运行验证并更新 CHANGELOG，对版本执行 `npm version patch --no-git-tag-version`（必要时用 minor/major），重新 publish。npm 上同一个版本不能覆盖。用户通过宿主市场更新并重启加载；本机 link 安装的用户仍按源码更新。
+运行验证并更新 CHANGELOG，升版本后重新 `npm publish`。npm 同一版本不能覆盖。
 
-## 市场简介建议
-
-一起听 · 网易云音乐：让 Coo 在切歌后参考网易云热门和最新评论，按自己的语气陪你聊一两句。支持评论间隔、模型字数约束、安静开关、快切合并和异常恢复。Windows 专用，读取曲目信息而非音频，无需网易云登录 Cookie。窗口标题模式无法准确判断暂停或发行版本；评论网页接口可能变化。
+宿主只检查 npm `latest` 并在扩展页显示更新按钮；安装后状态变为 `pending-restart`，需要重启 Coopanion 进程才会加载新代码，不存在后台自动升级。本机目录（`link:`）安装不参与更新检查。
