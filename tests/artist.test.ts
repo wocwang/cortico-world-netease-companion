@@ -175,4 +175,5 @@ test('getArtist 用 Discogs 原名别名核对英文歌手', async () => {
 
 test('歌手资料开关默认开启', () => {
   assert.equal(defaults().artistContext, true);
+  assert.equal(defaults().songContext, true);
 });

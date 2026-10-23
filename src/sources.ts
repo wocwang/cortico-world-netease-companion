@@ -2,7 +2,7 @@
  * 歌手背景补充来源。只做匿名读取和短摘录，失败时静默降级。
  * 百度百科提供中文概述，Discogs 提供社区维护的英文艺人档案；两者都属于第三方公开页面。
  */
-const UA = 'CorticoNeteaseCompanion/0.8.0 (+https://github.com/wocwang/cortico-world-netease-companion)';
+const UA = 'CorticoNeteaseCompanion/0.9.0 (+https://github.com/wocwang/cortico-world-netease-companion)';
 const REQUEST_TIMEOUT = 5000;
 /** 整组背景请求的预算：超时就只用已返回的部分，不拖慢评论机会。 */
 const BUDGET = 5000;
@@ -13,6 +13,10 @@ export interface BackgroundNote {
   /** 来源页上的标题或艺名，用于校验是否同一歌手。 */
   title: string;
   text: string;
+  /** 词条的一句话说明（歌曲词条使用）。 */
+  summary?: string;
+  /** 词条信息框字段：所属专辑、词曲、发行日期等。 */
+  facts?: Array<{ label: string; value: string }>;
   url?: string;
   /** Discogs 的别名/原名，参与同一性校验。 */
   names?: string[];
@@ -65,6 +69,23 @@ export async function fetchBaiduBaike(name: string, signal?: AbortSignal, reques
   return null;
 }
 
+/** 百度百科歌曲词条：创作背景概述 + 信息框中的词曲、专辑、发行与风格。 */
+export async function fetchBaiduSong(title: string, signal?: AbortSignal, request: typeof fetch = fetch): Promise<BackgroundNote | null> {
+  const params = new URLSearchParams({ scope: '103', format: 'json', appid: '379020', bk_key: title, bk_length: '600' });
+  const data = await getJson('https://baike.baidu.com/api/openapi/BaikeLemmaCardApi?' + params, signal, request);
+  const entry = clean(data?.title, 80);
+  const text = clean(data?.abstract, 700);
+  if (!entry || !text) return null;
+  const facts = (Array.isArray(data?.card) ? data.card : [])
+    .map((card: any) => ({
+      label: clean(card?.name, 40),
+      value: clean(String(Array.isArray(card?.value) ? card.value[0] ?? '' : card?.value ?? '').replace(/<[^>]*>/g, ''), 80),
+    }))
+    .filter((fact: { label: string; value: string }) => fact.label && fact.value)
+    .slice(0, 12);
+  return { source: '百度百科', kind: 'encyclopedia', title: entry, text, summary: clean(data?.desc, 120),
+    ...(facts.length ? { facts } : {}), url: https(data?.url) };
+}
 /** Discogs 社区艺人档案；只对含拉丁字母的歌手名检索，降低同名误配。 */
 export async function fetchDiscogs(name: string, signal?: AbortSignal, request: typeof fetch = fetch): Promise<BackgroundNote | null> {
   let lastError: unknown;

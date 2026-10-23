@@ -1,7 +1,17 @@
 import type { Track } from './state.ts';
-import { collectBackground, type BackgroundNote } from './sources.ts';
+import { collectBackground, fetchBaiduSong, type BackgroundNote } from './sources.ts';
 
 export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number }
+export interface SongBackground {
+  status: 'ok' | 'unavailable';
+  reason?: string;
+  source?: string;
+  title?: string;
+  text?: string;
+  facts?: Array<{ label: string; value: string }>;
+  url?: string;
+  fetchedAt?: string;
+}
 export interface CommentReference {
   status: 'ok' | 'unavailable' | 'disabled';
   reason?: string;
@@ -10,6 +20,8 @@ export interface CommentReference {
   match?: 'metadata' | 'title-artist-version-unverified';
   fetchedAt?: string;
   excerpts?: Array<{ text: string; kind: 'hot' | 'recent' | 'rising'; likes: number }>;
+  /** 百度百科歌曲词条：创作背景、词曲、专辑、发行与风格。 */
+  songBackground?: SongBackground;
 }
 export interface ArtistProfile {
   status: 'ok' | 'unavailable';
@@ -23,7 +35,7 @@ export interface ArtistProfile {
   fetchedAt?: string;
 }
 export interface CommentProvider {
-  get(track: Track, signal?: AbortSignal, maxExcerpts?: number): Promise<CommentReference>;
+  get(track: Track, signal?: AbortSignal, maxExcerpts?: number, withSongBackground?: boolean): Promise<CommentReference>;
   getArtist(track: Track, signal?: AbortSignal): Promise<ArtistProfile>;
 }
 const clean = (v: unknown, max = 240) => typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
@@ -260,6 +272,18 @@ function backgroundMatches(names: string[], note: BackgroundNote): boolean {
   return labelKeys.some(key => noteKeys.includes(key) || noteKeys.some(noteKey => compatibleContainment(key, noteKey)));
 }
 
+/** 歌曲词条必须歌名一致、正文提到当前歌手，并且确实是歌曲而不是同名条目。 */
+function songBackgroundMatches(song: Song, note: BackgroundNote): boolean {
+  const noteKey = titleKey(note.title);
+  const baseKey = titleKey(titleInfo(song.title).base);
+  if (!noteKey || (noteKey !== titleKey(song.title) && noteKey !== baseKey)) return false;
+  const hay = [note.title, note.summary ?? '', note.text, ...(note.facts ?? []).map(f => `${f.label} ${f.value}`)].join(' ');
+  const hayKey = artistKey(hay);
+  if (song.artists.length && !song.artists.some(artist => artistKeys(artist).some(key => hayKey.includes(key)))) return false;
+  return /歌曲|单曲|演唱|主题曲|片尾曲|插曲|配乐|原声/.test(`${note.summary ?? ''} ${note.text}`)
+    || (note.facts ?? []).some(f => ['所属专辑', '谱曲', '填词', '作词', '作曲', '音乐风格', '发行日期', '歌曲原唱', '编曲'].includes(f.label));
+}
+
 export interface RankedSong {
   song: Song;
   score: number;
@@ -409,6 +433,7 @@ export class NeteaseComments implements CommentProvider {
   private cache = new Map<string, { until: number; result: CommentReference }>();
   private artists = new Map<string, { id: number | null; until: number }>();
   private profiles = new Map<string, { until: number; result: ArtistProfile }>();
+  private songs = new Map<string, { until: number; result: SongBackground }>();
   private blockedUntil = 0;
   constructor(private request: typeof fetch = fetch) {}
   private async json(path: string, signal?: AbortSignal): Promise<any> {
@@ -602,9 +627,31 @@ export class NeteaseComments implements CommentProvider {
     }
     return { ...merged, comments };
   }
-  async get(track: Track, signal?: AbortSignal, maxExcerpts = 10): Promise<CommentReference> {
+  /** 百度百科歌曲词条；歌名、歌手或词条类型不匹配时明确不可用。 */
+  private async songBackground(song: Song, signal?: AbortSignal): Promise<SongBackground> {
+    const key = String(song.id);
+    const cached = this.songs.get(key);
+    if (cached && cached.until > Date.now()) return cached.result;
+    let result: SongBackground = { status: 'unavailable', reason: '歌曲背景读取失败' };
+    try {
+      const note = await fetchBaiduSong(song.title, signal, this.request);
+      if (!note) result = { status: 'unavailable', reason: '没有找到歌曲词条' };
+      else if (!songBackgroundMatches(song, note)) result = { status: 'unavailable', reason: '词条与当前歌曲不匹配' };
+      else result = { status: 'ok', source: note.source, title: note.title, text: note.text,
+        ...(note.facts?.length ? { facts: note.facts } : {}), ...(note.url ? { url: note.url } : {}),
+        fetchedAt: new Date().toISOString() };
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      result = { status: 'unavailable', reason: e instanceof Error ? e.message : '歌曲背景读取失败' };
+    }
+    this.songs.delete(key);
+    this.songs.set(key, { until: Date.now() + (result.status === 'ok' ? 30 * 60_000 : 5 * 60_000), result });
+    while (this.songs.size > 40) this.songs.delete(this.songs.keys().next().value!);
+    return result;
+  }
+  async get(track: Track, signal?: AbortSignal, maxExcerpts = 10, withSongBackground = false): Promise<CommentReference> {
     const total = Math.max(1, Math.min(50, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
-    const key = trackKey(track) + ':' + total, cached = this.cache.get(key);
+    const key = trackKey(track) + ':' + total + (withSongBackground ? ':bg' : ''), cached = this.cache.get(key);
     signal?.throwIfAborted();
     if (cached && cached.until > Date.now()) return cached.result;
     if (Date.now() < this.blockedUntil) return { status: 'unavailable', reason: '评论服务正在冷却，暂时普通陪听' };
@@ -614,10 +661,20 @@ export class NeteaseComments implements CommentProvider {
       let last: RankedSong | null = null;
       for (const candidate of found.slice(0, 2)) {
         last = candidate;
-        const excerpts = parseComments(await this.commentPages(candidate.song.id, total, signal), total);
+        const [raw, songBackground] = await Promise.all([
+          this.commentPages(candidate.song.id, total, signal),
+          withSongBackground
+            ? this.songBackground(candidate.song, signal).catch((e): SongBackground => {
+              if (signal?.aborted) throw e;
+              return { status: 'unavailable', reason: '歌曲背景暂时不可用' };
+            })
+            : Promise.resolve(null),
+        ]);
+        const excerpts = parseComments(raw, total);
         if (excerpts.length) {
           result = { status: 'ok', song: candidate.song, url: `https://music.163.com/song?id=${candidate.song.id}`,
-            match: candidate.match, fetchedAt: new Date().toISOString(), excerpts };
+            match: candidate.match, fetchedAt: new Date().toISOString(), excerpts,
+            ...(songBackground ? { songBackground } : {}) };
           break;
         }
       }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectBackground, fetchBaiduBaike, fetchDiscogs } from '../src/sources.ts';
+import { collectBackground, fetchBaiduBaike, fetchBaiduSong, fetchDiscogs } from '../src/sources.ts';
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const fake = (handler: (url: URL) => Response | Promise<Response>): typeof fetch =>
@@ -24,6 +24,36 @@ test('百度百科概述带来源、https 链接并截断', async () => {
   assert.match(note?.text ?? '', /华语流行乐男歌手/);
   assert.ok((note?.text.length ?? 0) <= 500);
   assert.equal(note?.url, 'https://baike.baidu.com/subview/2632/19244814.htm');
+});
+
+test('百度百科歌曲词条返回概述、一句话说明与信息框字段', async () => {
+  const request = fake(url => {
+    assert.equal(url.hostname, 'baike.baidu.com');
+    assert.equal(url.searchParams.get('bk_key'), '晴天');
+    return json({
+      title: '晴天',
+      desc: '2003年周杰伦演唱的流行摇滚歌曲',
+      abstract: '《晴天》是由周杰伦创作词曲、编曲并演唱的流行摇滚歌曲，收录于专辑《叶惠美》。',
+      url: 'http://baike.baidu.com/subview/218027/8743401.htm',
+      card: [
+        { name: '所属专辑', value: ['《叶惠美》'] },
+        { name: '谱曲', value: ['周杰伦'] },
+        { name: '国籍', value: ['<a href="/item/中国">中国</a>'] },
+        { name: '空字段', value: [''] },
+      ],
+    });
+  });
+  const note = await fetchBaiduSong('晴天', undefined, request);
+  assert.equal(note?.source, '百度百科');
+  assert.equal(note?.title, '晴天');
+  assert.equal(note?.summary, '2003年周杰伦演唱的流行摇滚歌曲');
+  assert.match(note?.text ?? '', /收录于专辑/);
+  assert.deepEqual(note?.facts, [
+    { label: '所属专辑', value: '《叶惠美》' },
+    { label: '谱曲', value: '周杰伦' },
+    { label: '国籍', value: '中国' },
+  ]);
+  assert.equal(note?.url, 'https://baike.baidu.com/subview/218027/8743401.htm');
 });
 
 test('百度百科完整名无词条时改用中文段重试', async () => {

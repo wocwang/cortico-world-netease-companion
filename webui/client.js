@@ -21,6 +21,7 @@ export default {
             { k: zh ? '陪听' : 'Commentary', v: s.commentary },
             { k: zh ? '评论区' : 'Comments', v: s.comment },
             { k: zh ? '歌手资料' : 'Artist', v: s.artist },
+            { k: zh ? '歌曲背景' : 'Song', v: s.song || '未启用' },
             { k: zh ? '偏好记忆' : 'Preferences', v: s.preferences || '未启用' },
             { k: zh ? '本次已请求评论' : 'Requests', v: String(s.requests) },
           ]));

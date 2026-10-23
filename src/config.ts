@@ -11,11 +11,12 @@ export interface MusicConfig {
   maxCommentChars: number;
   commentExcerpts: number;
   artistContext: boolean;
+  songContext: boolean;
 }
 export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
   sessionPattern: 'cloudmusic|netease|网易云', windowFallback: true, commentReference: true, maxCommentChars: 80,
-  commentExcerpts: 10, artistContext: true,
+  commentExcerpts: 10, artistContext: true, songContext: true,
 });
 export function commentLimits(cfg: MusicConfig): { maxChars: number; intervalSeconds: number; excerpts: number } {
   const bounded = (value: number, fallback: number, min: number, max: number) =>
@@ -28,6 +29,7 @@ export const configGroup: ConfigGroup = {
     type: 'object', title: '一起听 · 网易云音乐', properties: {
       'worlds.netease-music.commentReference': { type: 'boolean', title: '参考网易云评论区（联网）', 'x-hot': true },
       'worlds.netease-music.artistContext': { type: 'boolean', title: '联网搜索歌手背景资料', description: '开启后读取网易云歌手简介、代表作品与专辑，并补充百度百科概述和 Discogs 社区档案；与「参考网易云评论区」相互独立。', 'x-hot': true },
+      'worlds.netease-music.songContext': { type: 'boolean', title: '联网搜索歌曲背景资料', description: '开启后读取百度百科歌曲词条，补充创作背景、词曲、专辑、发行日期与音乐风格；与评论区、歌手资料相互独立。', 'x-hot': true },
       'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–50，默认 10。会先过滤求赞、打卡等低信息评论，再按信息量、点赞和新鲜度排序；条数越多上下文越长。', minimum: 3, maximum: 50, 'x-hot': true },
       'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
       'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },

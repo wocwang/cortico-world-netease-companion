@@ -234,6 +234,40 @@ test('评论条数超过 20 时翻页取更多候选', async () => {
   assert.ok(calls.some(c => c.includes('offset=100')));
 });
 
+test('开启歌曲背景时附带百度百科词条，并校验歌手', async () => {
+  const make = (artistInText: string) => {
+    const fake: typeof fetch = async input => {
+      const url = new URL(String(input));
+      const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+      if (url.pathname === '/api/search/get') {
+        return reply({ code: 200, result: { songCount: 1, songs: [{ id: 11, name: '晴天', artists: [{ name: '周杰伦' }], album: { name: '叶惠美' } }] } });
+      }
+      if (url.pathname === '/api/v1/resource/comments/R_SO_4_11') {
+        return reply({ code: 200, hotComments: [{ content: '主歌的吉他分解很干净，副歌进来时层次一下打开。', likedCount: 8 }], comments: [] });
+      }
+      if (url.hostname === 'baike.baidu.com') {
+        return reply({
+          title: '晴天', desc: `${artistInText}演唱的流行摇滚歌曲`,
+          abstract: `《晴天》是${artistInText}创作并演唱的歌曲，收录于专辑《叶惠美》。`,
+          url: 'http://baike.baidu.com/item/晴天',
+          card: [{ name: '所属专辑', value: ['《叶惠美》'] }, { name: '谱曲', value: [artistInText] }],
+        });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    return new NeteaseComments(fake);
+  };
+  const ok = await make('周杰伦').get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
+  assert.equal(ok.status, 'ok');
+  assert.equal(ok.songBackground?.status, 'ok');
+  assert.equal(ok.songBackground?.facts?.[0]?.label, '所属专辑');
+  assert.match(ok.songBackground?.text ?? '', /周杰伦/);
+  const wrong = await make('蔡依林').get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
+  assert.equal(wrong.status, 'ok');
+  assert.equal(wrong.songBackground?.status, 'unavailable');
+  assert.match(wrong.songBackground?.reason ?? '', /不匹配/);
+});
+
 test('最新评论里点赞最高的几条标记为 rising 并优先于普通最新评论', () => {
   const excerpts = parseComments({
     hotComments: [{ content: '主歌的吉他分解很干净，副歌进来时层次一下打开，录音版本比现场更克制。', likedCount: 2 }],
