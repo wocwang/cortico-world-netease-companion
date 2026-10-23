@@ -27,7 +27,7 @@ export const configGroup: ConfigGroup = {
   id: 'world:netease-music', owner: 'world:netease-music', schema: {
     type: 'object', title: '一起听 · 网易云音乐', properties: {
       'worlds.netease-music.commentReference': { type: 'boolean', title: '参考网易云评论区（联网）', 'x-hot': true },
-      'worlds.netease-music.artistContext': { type: 'boolean', title: '参考歌手资料（联网）', description: '开启后额外读取网易云歌手简介、代表作品与专辑信息，帮助理解曲风和作品背景；不替代评论区。', 'x-hot': true },
+      'worlds.netease-music.artistContext': { type: 'boolean', title: '参考歌手资料（联网）', description: '开启后额外读取网易云歌手简介、代表作品与专辑，并补充百度百科概述和 Discogs 社区档案；不替代评论区。', 'x-hot': true },
       'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–20，默认 10。热门约占六成，其余为最新；条数越多上下文越长。', minimum: 3, maximum: 20, 'x-hot': true },
       'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
       'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },

@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-netease-companion",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "网易云音乐陪听 World：本机曲目信息、切歌事件与节制的桌宠评论",
   "license": "MIT",

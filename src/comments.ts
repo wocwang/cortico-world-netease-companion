@@ -1,4 +1,5 @@
 import type { Track } from './state.ts';
+import { collectBackground, type BackgroundNote } from './sources.ts';
 
 export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number }
 export interface CommentReference {
@@ -16,6 +17,8 @@ export interface ArtistProfile {
   artist?: { id: number; name: string; aliases: string[]; bio: string; musicSize: number; albumSize: number };
   works?: Array<{ title: string; album: string }>;
   albums?: Array<{ name: string; year?: number; company?: string }>;
+  /** 第三方公开页面摘录：百度百科概述、Discogs 社区档案。 */
+  background?: Array<{ source: string; kind: 'encyclopedia' | 'community'; text: string; url?: string }>;
   url?: string;
   fetchedAt?: string;
 }
@@ -248,6 +251,13 @@ function artistTierFor(label: string, song: Song): number {
   if (!labelKeys.length || !songKeys.length) return 0;
   if (labelKeys.some(k => songKeys.includes(k))) return 3;
   return labelKeys.some(k => songKeys.some(sk => compatibleContainment(k, sk))) ? 2 : 0;
+}
+
+/** 第三方来源标题/别名必须与当前歌手匹配，避免百科同名词条串到别人身上。 */
+function backgroundMatches(names: string[], note: BackgroundNote): boolean {
+  const labelKeys = names.flatMap(artistKeys);
+  const noteKeys = [note.title, ...(note.names ?? [])].flatMap(artistKeys);
+  return labelKeys.some(key => noteKeys.includes(key) || noteKeys.some(noteKey => compatibleContainment(key, noteKey)));
 }
 
 export interface RankedSong {
@@ -499,16 +509,23 @@ export class NeteaseComments implements CommentProvider {
       const artist = parseArtistDetail(detail);
       if (!artist) result = { status: 'unavailable', reason: '歌手资料格式不可用' };
       else {
-        let albums: NonNullable<ArtistProfile['albums']> = [];
-        let works: NonNullable<ArtistProfile['works']> = [];
-        try { albums = parseArtistAlbums(await this.json(`/api/artist/albums/${id}?limit=10&offset=0`, signal)); }
-        catch (e) { if (signal?.aborted) throw e; }
-        try { works = selectArtistWorks(parseSongs(await this.json(`/api/v1/artist/songs?id=${id}&limit=100&offset=0`, signal), 100), artist.name); }
-        catch (e) { if (signal?.aborted) throw e; }
-        if (!works.length) works = parseArtistWorks(detail, artist.name);
-        result = { status: 'ok', artist, works,
-          ...(albums.length ? { albums } : {}), url: `https://music.163.com/artist?id=${id}`,
-          fetchedAt: new Date().toISOString() };
+        const labelNames = [...new Set([name, artist.name, ...artist.aliases])];
+        const [albums, works, background] = await Promise.all([
+          (async (): Promise<NonNullable<ArtistProfile['albums']>> => {
+            try { return parseArtistAlbums(await this.json(`/api/artist/albums/${id}?limit=10&offset=0`, signal)); }
+            catch (e) { if (signal?.aborted) throw e; return []; }
+          })(),
+          (async (): Promise<NonNullable<ArtistProfile['works']>> => {
+            try { return selectArtistWorks(parseSongs(await this.json(`/api/v1/artist/songs?id=${id}&limit=100&offset=0`, signal), 100), artist.name); }
+            catch (e) { if (signal?.aborted) throw e; return []; }
+          })(),
+          collectBackground(labelNames, signal, this.request).catch((e): BackgroundNote[] => { if (signal?.aborted) throw e; return []; }),
+        ]);
+        const notes = background.filter(note => backgroundMatches(labelNames, note))
+          .map(({ source, kind, text, url }) => ({ source, kind, text, ...(url ? { url } : {}) }));
+        result = { status: 'ok', artist, works: works.length ? works : parseArtistWorks(detail, artist.name),
+          ...(albums.length ? { albums } : {}), ...(notes.length ? { background: notes } : {}),
+          url: `https://music.163.com/artist?id=${id}`, fetchedAt: new Date().toISOString() };
       }
     } catch (e) {
       if (signal?.aborted) throw e;

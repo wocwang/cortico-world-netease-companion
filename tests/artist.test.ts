@@ -120,6 +120,59 @@ test('getArtist 可从窗口标题解析歌手，缺失歌手时明确不可用'
   assert.match(none.reason ?? '', /没有可用的歌手信息/);
 });
 
+test('getArtist 合并百度百科背景并过滤不相关词条', async () => {
+  const make = (baikeTitle: string) => {
+    const fake: typeof fetch = async input => {
+      const url = new URL(String(input));
+      const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+      if (url.pathname === '/api/search/get' && url.searchParams.get('type') === '100') {
+        return reply({ code: 200, result: { artists: [{ id: 6452, name: '周杰伦', alias: ['Jay Chou'], musicSize: 582, albumSize: 45 }] } });
+      }
+      if (url.pathname === '/api/v1/artist/6452') return reply({ code: 200, ...detail });
+      if (url.pathname === '/api/v1/artist/songs') return reply({ code: 200, ...artistSongs });
+      if (url.pathname === '/api/artist/albums/6452') return reply({ code: 200, ...albums });
+      if (url.hostname === 'baike.baidu.com') {
+        return reply({ title: baikeTitle, abstract: '百度百科概述：华语流行乐男歌手，2000 年发行首张专辑。', url: 'http://baike.baidu.com/item/x' });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    return new NeteaseComments(fake);
+  };
+  const matched = await make('周杰伦').getArtist(track());
+  assert.equal(matched.status, 'ok');
+  assert.equal(matched.background?.[0]?.source, '百度百科');
+  assert.equal(matched.background?.[0]?.kind, 'encyclopedia');
+  assert.match(matched.background?.[0]?.text ?? '', /华语流行乐男歌手/);
+  assert.equal(matched.background?.[0]?.url, 'https://baike.baidu.com/item/x');
+  const unrelated = await make('蔡依林').getArtist(track());
+  assert.equal(unrelated.status, 'ok');
+  assert.equal(unrelated.background, undefined);
+});
+
+test('getArtist 用 Discogs 原名别名核对英文歌手', async () => {
+  const fake: typeof fetch = async input => {
+    const url = new URL(String(input));
+    const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+    if (url.pathname === '/api/search/get' && url.searchParams.get('type') === '100') {
+      return reply({ code: 200, result: { artists: [{ id: 6452, name: '周杰伦', alias: ['Jay Chou'], musicSize: 582, albumSize: 45 }] } });
+    }
+    if (url.pathname === '/api/v1/artist/6452') return reply({ code: 200, ...detail });
+    if (url.pathname === '/api/v1/artist/songs') return reply({ code: 200, ...artistSongs });
+    if (url.pathname === '/api/artist/albums/6452') return reply({ code: 200, ...albums });
+    if (url.hostname === 'baike.baidu.com') return new Response('not found', { status: 404 });
+    if (url.hostname === 'api.discogs.com' && url.pathname === '/database/search') return reply({ results: [{ id: 1705275 }] });
+    if (url.hostname === 'api.discogs.com' && url.pathname === '/artists/1705275') {
+      return reply({ name: 'Jay Chou', realname: '周杰倫', namevariations: ['周杰伦'], profile: 'Taiwanese musician and singer-songwriter.', uri: '/artist/1705275-Jay-Chou' });
+    }
+    return new Response('not found', { status: 404 });
+  };
+  const result = await new NeteaseComments(fake).getArtist(track({ artist: 'Jay Chou' }));
+  assert.equal(result.status, 'ok');
+  assert.equal(result.background?.[0]?.source, 'Discogs');
+  assert.equal(result.background?.[0]?.kind, 'community');
+  assert.match(result.background?.[0]?.text ?? '', /Taiwanese musician/);
+});
+
 test('歌手资料开关默认开启', () => {
   assert.equal(defaults().artistContext, true);
 });

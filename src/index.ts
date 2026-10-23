@@ -15,7 +15,7 @@ const definition: WorldDefinition<MusicConfig> = {
       music_now_playing: { zh: '读取当前曲目、来源与信息新鲜度。', en: 'Read current track metadata and freshness.' },
       music_recent_tracks: { zh: '查看本次运行最近观察到的 20 首曲目。', en: 'Read the last 20 observed tracks in this run.' },
       music_song_comments: { zh: '参考当前歌曲的热门与最新评论，含匹配依据及版本不确定性。', en: 'Read hot and recent song comments with matching uncertainty.' },
-      music_artist_context: { zh: '读取当前歌手简介、别名、代表作品与专辑（需开启歌手资料开关）。', en: 'Read the current artist profile, works and albums when the artist context switch is on.' },
+      music_artist_context: { zh: '读取当前歌手简介、别名、代表作品、专辑与第三方背景摘录（需开启歌手资料开关）。', en: 'Read the current artist profile, works, albums and labeled background excerpts when the artist context switch is on.' },
       music_set_commentary: { zh: '保存切歌评论开关。', en: 'Persist the music commentary preference.' },
     }),
     events: [{ type: 'netease-music.comment_opportunity', description: {
