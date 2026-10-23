@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-- 本分支版本：`1.0.0`，MIT，Windows，World API 6。
-- 发布包名：`better-cortico-world-netease-companion`（已确认 npm 上无同名包），中文显示名仍为「一起听 · 网易云音乐」。
-- 原名 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有，不能覆盖。
+- 本分支版本：`1.0.1`，MIT，Windows，World API 6。
+- 发布包名：`better-cortico-world-netease-companion`（已发布 1.0.0，1.0.1 调整市场显示名）。
+- 市场显示名：`更好的 一起听 · 网易云音乐`；原名 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有，不能覆盖。
 - 当前机器尚未登录 npm；发布前需要账号所有者执行 `npm login --auth-type=web`。
 
 ## 详情页展示从哪里来

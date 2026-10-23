@@ -1,6 +1,6 @@
 {
   "name": "better-cortico-world-netease-companion",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "网易云音乐陪听 World：本机曲目信息、切歌事件与节制的桌宠评论",
   "license": "MIT",
@@ -28,7 +28,7 @@
   "cortico": {
     "kind": "world",
     "api": 6,
-    "displayName": "一起听 · 网易云音乐",
+    "displayName": "更好的 一起听 · 网易云音乐",
     "tags": [
       "coopanion",
       "companion",
