@@ -2,8 +2,11 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $pattern = $env:MUSIC_SESSION_PATTERN
-if (-not $pattern) { $pattern = 'cloudmusic|netease|\u7f51\u6613\u4e91' }
+if (-not $pattern) { $pattern = 'cloudmusic|netease|QQMusic|qqmusic' }
 try { $appRegex = [regex]::new($pattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase, [TimeSpan]::FromMilliseconds(100)) } catch { throw 'Invalid MUSIC_SESSION_PATTERN regex' }
+$windowPattern = $env:MUSIC_WINDOW_PROCESS
+if (-not $windowPattern) { $windowPattern = 'cloudmusic|QQMusic|qqmusic' }
+try { $windowRegex = [regex]::new($windowPattern, [Text.RegularExpressions.RegexOptions]::IgnoreCase, [TimeSpan]::FromMilliseconds(100)) } catch { throw 'Invalid MUSIC_WINDOW_PROCESS regex' }
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 function Await-WinRT($operation, $resultType) {
     $method = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
@@ -51,12 +54,12 @@ while ($true) {
     } catch { $readError = $_.Exception.Message; $manager = $null; $initError = $readError }
     if ($null -eq $track -and $env:MUSIC_WINDOW_FALLBACK -eq '1') {
         # A title alone cannot prove playback or distinguish title/artist reliably.
-        $player = Get-Process -Name cloudmusic -ErrorAction SilentlyContinue |
-            Where-Object { $_.MainWindowTitle -and ($_.MainWindowTitle -match '\S.*\s[-\u2013\u2014]\s.*\S' -or $_.MainWindowTitle -match '[\u4e00-\u9fff][-\u2013\u2014][\u4e00-\u9fff]') -and $_.MainWindowTitle -notmatch '^(\u7f51\u6613\u4e91\u97f3\u4e50|NetEase Cloud Music)$' } |
+        $player = Get-Process -ErrorAction SilentlyContinue |
+            Where-Object { $windowRegex.IsMatch($_.ProcessName) -and $_.MainWindowTitle -and ($_.MainWindowTitle -match '\S.*\s[-\u2013\u2014]\s.*\S' -or $_.MainWindowTitle -match '[\u4e00-\u9fff][-\u2013\u2014][\u4e00-\u9fff]') -and $_.MainWindowTitle -notmatch '^(\u7f51\u6613\u4e91\u97f3\u4e50|NetEase Cloud Music)$' } |
             Select-Object -First 1
         if ($null -ne $player) {
             $track = @{ title = $player.MainWindowTitle; artist = ''; album = '';
-                app = 'cloudmusic'; status = 'unknown'; method = 'window-title' }
+                app = $player.ProcessName; status = 'unknown'; method = 'window-title' }
         }
     }
     $result = @{ track = $track }

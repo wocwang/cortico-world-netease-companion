@@ -4,11 +4,17 @@ import { defaults, type MusicConfig } from './config.ts';
 import { MusicWorld, toolDecls } from './world.ts';
 
 const definition: WorldDefinition<MusicConfig> = {
-  id: 'netease-music', label: '一起听 · 网易云音乐', defaults,
+  id: 'netease-music', label: '一起听', defaults,
   preflight(ctx) {
     if (process.platform !== 'win32') throw new Error('此版本需要 Windows 10 1809+ / Windows 11');
+    if (ctx.cfg.sessionPattern === 'cloudmusic|netease|网易云')
+      ctx.persist({ sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic' });
+    if (!ctx.cfg.windowFallbackProcess)
+      ctx.persist({ windowFallbackProcess: 'cloudmusic|QQMusic|qqmusic' });
     try { new RegExp(ctx.cfg.sessionPattern); }
     catch { throw new Error('媒体会话应用名匹配不是有效正则表达式'); }
+    try { new RegExp(ctx.cfg.windowFallbackProcess || 'cloudmusic|QQMusic|qqmusic'); }
+    catch { throw new Error('窗口标题降级进程名匹配不是有效正则表达式'); }
   },
   create: ctx => new MusicWorld(ctx.cfg, patch => ctx.persist(patch), undefined, undefined, ctx.dataDir ? join(ctx.dataDir, 'netease-companion') : ''),
   describe: {

@@ -10,7 +10,7 @@ export interface SongBackground {
   title?: string;
   text?: string;
   facts?: Array<{ label: string; value: string }>;
-  /** 网易云音乐百科：曲风、标签、BPM、获奖、乐评、相似歌曲与相关歌单。 */
+  /** 网易云百科：曲风、标签、BPM、获奖、乐评、相似歌曲与相关歌单。 */
   wiki?: SongWiki;
   url?: string;
   fetchedAt?: string;
@@ -23,7 +23,7 @@ export interface CommentReference {
   match?: 'metadata' | 'title-artist-version-unverified';
   fetchedAt?: string;
   excerpts?: Array<{ text: string; kind: 'hot' | 'recent' | 'rising'; likes: number }>;
-  /** 歌曲背景：百度百科创作背景 + 网易云音乐百科的结构化资料。 */
+  /** 歌曲背景：百度百科创作背景 + 网易云百科的结构化资料。 */
   songBackground?: SongBackground;
 }
 export interface ArtistProfile {
@@ -42,8 +42,8 @@ export interface CommentProvider {
   getArtist(track: Track, signal?: AbortSignal): Promise<ArtistProfile>;
 }
 const clean = (v: unknown, max = 240) => typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
-const APP_SUFFIX = /\s*[-–—]\s*(?:网易云音乐|NetEase Cloud Music)\s*$/i;
-const APP_PREFIX = /^\s*(?:网易云音乐|NetEase Cloud Music)\s*[-–—]\s*/i;
+const APP_SUFFIX = /\s*[-–—]\s*(?:网易云音乐|NetEase Cloud Music|QQ音乐|QQ Music)\s*$/i;
+const APP_PREFIX = /^\s*(?:网易云音乐|NetEase Cloud Music|QQ音乐|QQ Music)\s*[-–—]\s*/i;
 const BRACKETS = /[（(【\[][^）)】\]]*[）)】\]]/g;
 const ARTIST_SEPARATOR = /\s+(?:\/|&|,|;)\s+|\s*[、；，]\s*|\s*(?:\bfeat\.?\b|\bft\.?\b)\s*/i;
 
@@ -214,7 +214,7 @@ export function parseArtistWorks(raw: any, artistName: string, max = 8): Array<{
 }
 /** 合辑/精选等非原专辑标记：同曲多版本时优先原专辑，缺原专辑也不丢弃该曲。 */
 const COMPILATION = /精选|合集|合辑|全记录|总冠军|排行榜|热门|情歌|冠军|珍藏|怀旧|歌单|金曲/i;
-/** Prefer songs led by the artist, ordered by NetEase popularity, with the original album over compilations. */
+/** Prefer songs led by the artist, ordered by platform popularity, with the original album over compilations. */
 export function selectArtistWorks(songs: Song[], artistName: string, max = 8): Array<{ title: string; album: string }> {
   const keys = artistKeys(artistName);
   const picked = new Map<string, Song>();
@@ -695,7 +695,7 @@ export class NeteaseComments implements CommentProvider {
     }
     return { ...merged, comments };
   }
-  /** 百度百科创作背景 + 网易云音乐百科；两个来源独立，任一成功即返回。 */
+  /** 百度百科创作背景 + 网易云百科；两个来源独立，任一成功即返回。 */
   private async songBackground(song: Song, signal?: AbortSignal): Promise<SongBackground> {
     const key = String(song.id);
     const cached = this.songs.get(key);
@@ -712,7 +712,7 @@ export class NeteaseComments implements CommentProvider {
       const baidu = note && songBackgroundMatches(song, note) ? note : null;
       if (baidu || wiki) {
         result = { status: 'ok',
-          source: [baidu?.source, wiki ? '网易云音乐百科' : ''].filter(Boolean).join(' + '),
+          source: [baidu?.source, wiki ? '网易云百科' : ''].filter(Boolean).join(' + '),
           title: baidu?.title ?? song.title,
           ...(baidu?.text ? { text: baidu.text } : {}),
           ...(baidu?.facts?.length ? { facts: baidu.facts } : {}),

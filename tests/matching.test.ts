@@ -62,6 +62,16 @@ test('trackLabels 为窗口标题给出双向解析', () => {
   assert.deepEqual(trackLabels(track()), [{ title: '起风了', artist: '买辣椒也用券' }]);
 });
 
+test('QQ音乐窗口标题后缀或前缀会被移除并可匹配', () => {
+  const found = matchSong(windowTrack('起风了 - 买辣椒也用券 - QQ音乐'), [song()]);
+  assert.equal(found?.song.id, 1);
+  assert.equal(found?.match, 'title-artist-version-unverified');
+  assert.deepEqual(trackLabels(windowTrack('QQ音乐 - 起风了 - 买辣椒也用券')), [
+    { title: '起风了', artist: '买辣椒也用券' },
+    { title: '买辣椒也用券', artist: '起风了' },
+  ]);
+});
+
 test('artistKeys 包含原名、括号内别名和分隔后的合作歌手', () => {
   const keys = artistKeys('冯沁苑(买辣椒也用券) / 周深');
   assert.ok(keys.includes('冯沁苑'));
@@ -293,7 +303,7 @@ test('开启歌曲背景时附百度百科词条与网易云百科，百度词�
   assert.equal(ok.songBackground?.facts?.[0]?.label, '所属专辑');
   assert.match(ok.songBackground?.text ?? '', /周杰伦/);
   assert.deepEqual(ok.songBackground?.wiki?.genres, ['流行-华语流行']);
-  assert.match(ok.songBackground?.source ?? '', /网易云音乐百科/);
+  assert.match(ok.songBackground?.source ?? '', /网易云百科/);
 
   // 网易云百科按歌曲 ID 读取，不依赖百度词条的歌手校验；百度词条不匹配时只丢弃百度部分。
   const wrong = await make('蔡依林').get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
@@ -301,7 +311,7 @@ test('开启歌曲背景时附百度百科词条与网易云百科，百度词�
   assert.equal(wrong.songBackground?.status, 'ok');
   assert.equal(wrong.songBackground?.text, undefined);
   assert.equal(wrong.songBackground?.facts, undefined);
-  assert.equal(wrong.songBackground?.source, '网易云音乐百科');
+  assert.equal(wrong.songBackground?.source, '网易云百科');
 
   // 网易云百科不可用时，百度词条的歌手校验仍应明确标记不匹配。
   const wrongNoWiki = await make('蔡依林', false).get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);

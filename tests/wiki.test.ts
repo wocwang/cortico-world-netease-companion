@@ -45,7 +45,7 @@ const payload = {
   },
 };
 
-test('解析网易云音乐百科的结构化字段与乐评', () => {
+test('解析网易云百科的结构化字段与乐评', () => {
   const wiki = parseSongWiki(payload, 186016, new Date('2026-10-24T00:00:00Z'));
   assert.ok(wiki);
   assert.deepEqual(wiki.genres, ['流行-华语流行']);

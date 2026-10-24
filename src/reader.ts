@@ -26,6 +26,7 @@ export class WindowsReader implements Reader {
         '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('../scripts/media-session.ps1', import.meta.url))], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, MUSIC_SESSION_PATTERN: this.cfg.sessionPattern,
+          MUSIC_WINDOW_PROCESS: this.cfg.windowFallbackProcess || 'cloudmusic|QQMusic|qqmusic',
           MUSIC_WINDOW_FALLBACK: this.cfg.windowFallback ? '1' : '0' },
       });
       let lineBytes = 0;

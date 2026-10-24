@@ -10,7 +10,7 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(web.panels?.[0]?.id, 'live-status');
   assert.equal(web.panels?.[1]?.id, 'listening-ranking');
   const snap = await web.invoke?.('live-status', 'snapshot', []) as any;
-  assert.equal(snap.reading, '等待网易云音乐（未打开或无曲目）');
+  assert.equal(snap.reading, '等待音乐播放器（未打开或无曲目）');
   assert.equal(snap.track, '无');
   assert.equal(snap.commentary, '开启');
   assert.equal(snap.comment, '尚未获取');

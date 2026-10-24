@@ -1,5 +1,5 @@
 /**
- * 网易云音乐「歌曲百科」读取。走客户端 eapi，匿名可用。
+ * 网易云「歌曲百科」读取。走客户端 eapi，匿名可用。
  * 只取结构化字段和一段平台乐评；失败时静默降级，不影响百度百科与评论区。
  */
 import { createCipheriv, createHash } from 'node:crypto';
