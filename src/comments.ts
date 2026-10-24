@@ -1,6 +1,9 @@
 import type { Track } from './state.ts';
 import { collectBackground, fetchBaiduSong, type BackgroundNote } from './sources.ts';
 import { fetchSongWiki, type SongWiki } from './wiki.ts';
+import { mergeTranslation, parseLrc, type LyricsReference } from './lyrics.ts';
+
+export type { LyricsReference } from './lyrics.ts';
 
 export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number }
 export interface SongBackground {
@@ -40,6 +43,8 @@ export interface ArtistProfile {
 export interface CommentProvider {
   get(track: Track, signal?: AbortSignal, maxExcerpts?: number, withSongBackground?: boolean): Promise<CommentReference>;
   getArtist(track: Track, signal?: AbortSignal): Promise<ArtistProfile>;
+  /** 可选：取当前曲目歌词；不支持歌词的 provider 可以不实现。 */
+  lyrics?(track: Track, signal?: AbortSignal, maxLines?: number): Promise<LyricsReference>;
 }
 const clean = (v: unknown, max = 240) => typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
 const APP_SUFFIX = /\s*[-–—]\s*(?:网易云音乐|NetEase Cloud Music)\s*$/i;
@@ -502,6 +507,7 @@ export class NeteaseComments implements CommentProvider {
   private artists = new Map<string, { id: number | null; until: number }>();
   private profiles = new Map<string, { until: number; result: ArtistProfile }>();
   private songs = new Map<string, { until: number; result: SongBackground }>();
+  private lyricCache = new Map<string, { until: number; result: LyricsReference }>();
   private blockedUntil = 0;
   constructor(private request: typeof fetch = fetch) {}
   private async json(path: string, signal?: AbortSignal): Promise<any> {
@@ -732,6 +738,45 @@ export class NeteaseComments implements CommentProvider {
     this.songs.delete(key);
     this.songs.set(key, { until: Date.now() + (result.status === 'ok' ? 30 * 60_000 : 5 * 60_000), result });
     while (this.songs.size > 40) this.songs.delete(this.songs.keys().next().value!);
+    return result;
+  }
+  /**
+   * 取当前曲目的官方 LRC 歌词：复用 find() 的搜索匹配，翻译行按时间戳合并。
+   * 成功结果按曲目缓存 60 分钟，同一首重听不重复请求；纯音乐或未提供歌词返回 empty。
+   */
+  async lyrics(track: Track, signal?: AbortSignal, maxLines = 80): Promise<LyricsReference> {
+    const key = trackKey(track), cached = this.lyricCache.get(key);
+    signal?.throwIfAborted();
+    if (cached && cached.until > Date.now()) return cached.result;
+    if (Date.now() < this.blockedUntil) return { status: 'unavailable', reason: '网易云接口正在冷却，暂时不读歌词' };
+    let result: LyricsReference = { status: 'unavailable', reason: '歌词读取失败' };
+    try {
+      const found = await this.find(track, signal);
+      const best = found[0];
+      if (!best) {
+        result = { status: 'empty', reason: '没有找到歌名、歌手或专辑信息相符的歌曲' };
+      } else {
+        const query = new URLSearchParams({ id: String(best.song.id), lv: '-1', tv: '-1', rv: '-1' });
+        const raw = await this.json('/api/song/lyric?' + query, signal);
+        const lines = parseLrc(typeof raw?.lrc?.lyric === 'string' ? raw.lrc.lyric : '');
+        if (!lines.length) {
+          result = { status: 'empty', reason: '这首歌没有可用的歌词（纯音乐或未提供）', song: best.song, match: best.match };
+        } else {
+          const translated = typeof raw?.tlyric?.lyric === 'string' ? raw.tlyric.lyric : '';
+          const merged = translated ? mergeTranslation(lines, translated) : lines;
+          result = { status: 'ok', song: best.song, match: best.match, source: 'netease-lrc',
+            url: `https://music.163.com/song?id=${best.song.id}`, hasTranslation: merged.some(line => line.tr),
+            total: merged.length, lines: merged.slice(0, Math.max(1, Math.min(200, Math.floor(maxLines)))),
+            fetchedAt: new Date().toISOString() };
+        }
+      }
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      result = { status: 'unavailable', reason: e instanceof Error ? e.message : '歌词读取失败' };
+    }
+    this.lyricCache.delete(key);
+    this.lyricCache.set(key, { until: Date.now() + (result.status === 'ok' ? 60 * 60_000 : 5 * 60_000), result });
+    while (this.lyricCache.size > 20) this.lyricCache.delete(this.lyricCache.keys().next().value!);
     return result;
   }
   async get(track: Track, signal?: AbortSignal, maxExcerpts = 10, withSongBackground = false): Promise<CommentReference> {
