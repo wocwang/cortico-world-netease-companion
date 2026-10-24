@@ -12,6 +12,9 @@ export interface MusicConfig {
   commentExcerpts: number;
   artistContext: boolean;
   songContext: boolean;
+  lyricsContext: boolean;
+  lyricsTranslation: boolean;
+  lyricsLines: number;
   listeningTrackLimit: number;
   listeningArtistLimit: number;
   listeningRankTrackRange: number;
@@ -21,6 +24,7 @@ export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
   sessionPattern: 'cloudmusic|netease|网易云', windowFallback: true, commentReference: true, maxCommentChars: 80,
   commentExcerpts: 10, artistContext: true, songContext: true,
+  lyricsContext: true, lyricsTranslation: true, lyricsLines: 12,
   listeningTrackLimit: 100, listeningArtistLimit: 30,
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
 });
@@ -41,12 +45,19 @@ export function commentLimits(cfg: MusicConfig): { maxChars: number; intervalSec
   return { maxChars: bounded(cfg.maxCommentChars, 80, 10, 500), intervalSeconds: bounded(cfg.cooldownSeconds, 120, 30, 3600),
     excerpts: bounded(cfg.commentExcerpts, 10, 3, 50) };
 }
+export function lyricLimits(cfg: MusicConfig): { lines: number } {
+  const value = cfg.lyricsLines;
+  return { lines: Number.isFinite(value) ? Math.floor(Math.max(3, Math.min(80, value))) : 12 };
+}
 export const configGroup: ConfigGroup = {
   id: 'world:netease-music', owner: 'world:netease-music', schema: {
     type: 'object', title: '一起听 · 网易云音乐', properties: {
       'worlds.netease-music.commentReference': { type: 'boolean', title: '参考网易云评论区（联网）', 'x-hot': true },
       'worlds.netease-music.artistContext': { type: 'boolean', title: '联网搜索歌手背景资料', description: '开启后读取网易云歌手简介、代表作品与专辑，并补充百度百科概述和 Discogs 社区档案；与「参考网易云评论区」相互独立。', 'x-hot': true },
       'worlds.netease-music.songContext': { type: 'boolean', title: '联网搜索歌曲背景资料', description: '开启后随评论参考读取百度百科歌曲词条（创作背景、词曲、专辑、发行日期）和网易云音乐百科（曲风、标签、BPM、获奖、乐评、相似歌曲）；关闭评论区参考时不会单独请求。', 'x-hot': true },
+      'worlds.netease-music.lyricsContext': { type: 'boolean', title: '参考歌词（联网）', description: '开启后按当前曲目向网易云取官方 LRC，切歌时随事件带上歌词摘要（默认前 12 行 + 当前行）；与「参考网易云评论区」相互独立。', 'x-hot': true },
+      'worlds.netease-music.lyricsTranslation': { type: 'boolean', title: '歌词附带中文翻译', description: '外文歌有官方翻译时按时间戳逐行合并；没有翻译的曲目不会输出伪造译文。', 'x-hot': true },
+      'worlds.netease-music.lyricsLines': { type: 'integer', title: '歌词摘要行数', description: '3–80，默认 12。切歌事件里带多少行歌词；调小可节省上下文，想让她看全首时可以让它调 music_lyrics。', minimum: 3, maximum: 80, 'x-hot': true },
       'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–50，默认 10。会先过滤求赞、打卡等低信息评论，再按信息量、点赞和新鲜度排序；条数越多上下文越长。', minimum: 3, maximum: 50, 'x-hot': true },
       'worlds.netease-music.listeningTrackLimit': { type: 'integer', title: '一起听排名歌曲收录上限', description: '10–500，默认 100。超过上限时保留播放次数与歌手出现次数更高的歌曲；同分时随机替换，新听到的歌先进入候补。', minimum: 10, maximum: 500, 'x-hot': true },
       'worlds.netease-music.listeningArtistLimit': { type: 'integer', title: '一起听排名歌手收录上限', description: '5–100，默认 30。超过上限时保留出现次数更高的歌手；同分时随机替换，新听到的歌手先进入候补。', minimum: 5, maximum: 100, 'x-hot': true },
