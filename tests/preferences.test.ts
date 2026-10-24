@@ -97,6 +97,7 @@ test('AI 通过工具写入画像并能在当前曲目工具中读到', async ()
     assert.equal(now.commentPreferences[0].note, '喜欢讲个人经历的评论');
     assert.equal(now.listeningProfile.interaction, 'more');
     assert.match(now.profileSummary, /喜欢讲个人经历的评论/);
+    assert.equal(now.listeningMemory.status, 'empty');
     assert.equal(now.commentLimits.intervalSeconds, 90);
     await assert.rejects(call('music_comment_preference', { sentiment: 'love', note: 'x' }), /sentiment/);
     await assert.rejects(call('music_comment_preference', {}), /需要/);

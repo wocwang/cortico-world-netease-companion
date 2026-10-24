@@ -2,7 +2,7 @@
  * 歌手背景补充来源。只做匿名读取和短摘录，失败时静默降级。
  * 百度百科提供中文概述，Discogs 提供社区维护的英文艺人档案；两者都属于第三方公开页面。
  */
-const UA = 'CorticoNeteaseCompanion/1.2.0 (+https://github.com/wocwang/cortico-world-netease-companion)';
+const UA = 'CorticoNeteaseCompanion/1.3.0 (+https://github.com/wocwang/cortico-world-netease-companion)';
 const REQUEST_TIMEOUT = 5000;
 /** 整组背景请求的预算：超时就只用已返回的部分，不拖慢评论机会。 */
 const BUDGET = 5000;
