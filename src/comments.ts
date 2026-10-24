@@ -1,5 +1,6 @@
 import type { Track } from './state.ts';
 import { collectBackground, fetchBaiduSong, type BackgroundNote } from './sources.ts';
+import { fetchSongWiki, type SongWiki } from './wiki.ts';
 
 export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number }
 export interface SongBackground {
@@ -9,6 +10,8 @@ export interface SongBackground {
   title?: string;
   text?: string;
   facts?: Array<{ label: string; value: string }>;
+  /** 网易云音乐百科：曲风、标签、BPM、获奖、乐评、相似歌曲与相关歌单。 */
+  wiki?: SongWiki;
   url?: string;
   fetchedAt?: string;
 }
@@ -20,7 +23,7 @@ export interface CommentReference {
   match?: 'metadata' | 'title-artist-version-unverified';
   fetchedAt?: string;
   excerpts?: Array<{ text: string; kind: 'hot' | 'recent' | 'rising'; likes: number }>;
-  /** 百度百科歌曲词条：创作背景、词曲、专辑、发行与风格。 */
+  /** 歌曲背景：百度百科创作背景 + 网易云音乐百科的结构化资料。 */
   songBackground?: SongBackground;
 }
 export interface ArtistProfile {
@@ -383,9 +386,67 @@ function droppable(text: string): boolean {
   return REPEAT.test(text) && core <= 12;
 }
 
-interface CommentCandidate { text: string; kind: 'hot' | 'recent'; likes: number; order: number; score: number; rising: boolean }
+export interface BackgroundTerm { text: string; weight: number }
 
-export function parseComments(raw: any, maxExcerpts = 10): NonNullable<CommentReference['excerpts']> {
+const BACKGROUND_STRONG = /专辑|发行|作词|作曲|谱曲|编曲|原唱|制作人|获奖|奖项|影视|电影|电视剧/;
+const BACKGROUND_WEAK = /风格|流派|时长/;
+const termText = (value: string) => value.normalize('NFKC')
+  .replace(/^[《「『【\[\(（]+|[》」』】\]\)）]+$/g, '').replace(/\s+/g, ' ').trim();
+const termKey = (value: string) => termText(value).toLowerCase().replace(/\s+/g, '');
+
+/** 从歌曲背景里挑出可用于匹配评论的专有信息；歌名与歌手本身不作为线索。 */
+export function backgroundTerms(background: SongBackground | null | undefined, song?: { title: string; artists: string[] }): BackgroundTerm[] {
+  if (!background || background.status !== 'ok') return [];
+  const blocked = new Set([song?.title ?? '', ...(song?.artists ?? [])].map(termKey).filter(Boolean));
+  const terms = new Map<string, BackgroundTerm>();
+  const add = (value: unknown, weight: number) => {
+    if (typeof value !== 'string') return;
+    const text = termText(value);
+    const key = termKey(text);
+    if (key.length < 2 || blocked.has(key)) return;
+    const current = terms.get(key);
+    if (!current || current.weight < weight) terms.set(key, { text, weight });
+  };
+  const addLoose = (value: string, weight: number) => {
+    add(value, weight);
+    for (const quote of value.match(/《([^》]{1,40})》/g) ?? []) add(quote, weight);
+    for (const year of value.match(/\b(?:19|20)\d{2}\b/g) ?? []) add(year, Math.max(3, weight - 1));
+  };
+  for (const fact of background.facts ?? []) {
+    if (BACKGROUND_STRONG.test(fact.label)) addLoose(fact.value, 5);
+    else if (BACKGROUND_WEAK.test(fact.label)) add(fact.value, 2);
+  }
+  // 百度词条概述里提到的专辑/作品名和年份也作为线索；歌名本身已在 blocked 中排除。
+  for (const quote of background.text?.match(/《([^》]{1,40})》/g) ?? []) add(quote, 4);
+  for (const year of background.text?.match(/\b(?:19|20)\d{2}\b/g) ?? []) add(year, 3);
+  for (const genre of background.wiki?.genres ?? []) {
+    for (const part of genre.split(/[-/、]/)) add(part, 2);
+  }
+  for (const tag of background.wiki?.tags ?? []) add(tag, 1.5);
+  for (const award of background.wiki?.awards ?? []) {
+    for (const part of award.split(/\s+/)) add(part, 4);
+  }
+  for (const appearance of background.wiki?.appearances ?? []) addLoose(appearance, 3);
+  return [...terms.values()].sort((a, b) => b.weight - a.weight).slice(0, 24);
+}
+
+function backgroundRelevance(text: string, terms: BackgroundTerm[]): { bonus: number; strong: boolean } {
+  if (!terms.length) return { bonus: 0, strong: false };
+  const hay = termKey(text);
+  let bonus = 0;
+  let strong = false;
+  for (const term of terms) {
+    const key = termKey(term.text);
+    if (!key || !hay.includes(key)) continue;
+    if (term.weight > bonus) bonus = term.weight;
+    if (term.weight >= 3) strong = true;
+  }
+  return { bonus: Math.min(6, bonus), strong };
+}
+
+interface CommentCandidate { text: string; kind: 'hot' | 'recent'; likes: number; order: number; score: number; rising: boolean; relevance: number; strongRelated: boolean }
+
+export function parseComments(raw: any, maxExcerpts = 10, terms: BackgroundTerm[] = []): NonNullable<CommentReference['excerpts']> {
   if (!Array.isArray(raw?.comments) && !Array.isArray(raw?.hotComments) && !Array.isArray(raw?.topComments)) throw new Error('评论接口返回格式不可用');
   const total = Math.max(1, Math.min(50, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));
   const seen = new Set<string>();
@@ -395,7 +456,8 @@ export function parseComments(raw: any, maxExcerpts = 10): NonNullable<CommentRe
       const text = clean(c?.content);
       if (!text || droppable(text) || seen.has(text)) continue;
       seen.add(text);
-      candidates.push({ text, kind, likes: Number.isFinite(c.likedCount) ? Math.max(0, c.likedCount) : 0, order: candidates.length, score: 0, rising: false });
+      candidates.push({ text, kind, likes: Number.isFinite(c.likedCount) ? Math.max(0, c.likedCount) : 0,
+        order: candidates.length, score: 0, rising: false, relevance: 0, strongRelated: false });
     }
   };
   add([...(Array.isArray(raw.topComments) ? raw.topComments : []), ...(Array.isArray(raw.hotComments) ? raw.hotComments : [])], 'hot');
@@ -407,7 +469,11 @@ export function parseComments(raw: any, maxExcerpts = 10): NonNullable<CommentRe
     .slice(0, risingMax).filter(c => c.likes >= 3));
   for (const c of candidates) {
     c.rising = rising.has(c);
-    c.score = informationScore(c.text) + Math.min(6, Math.log2(1 + c.likes)) + (c.kind === 'hot' ? 1 : 0) + (c.rising ? 3 : 0);
+    const background = backgroundRelevance(c.text, terms);
+    c.relevance = background.bonus;
+    c.strongRelated = background.strong;
+    c.score = informationScore(c.text) + Math.min(6, Math.log2(1 + c.likes)) + (c.kind === 'hot' ? 1 : 0) +
+      (c.rising ? 3 : 0) + c.relevance;
   }
 
   const picked: CommentCandidate[] = [];
@@ -421,6 +487,8 @@ export function parseComments(raw: any, maxExcerpts = 10): NonNullable<CommentRe
     }
   };
   const hotQuota = Math.ceil(total * 0.6);
+  // 与歌曲背景事实（专辑、发行、词曲、获奖、影视等）有关的评论先占一席，避免被高赞泛评挤掉。
+  take(candidates.filter(c => c.strongRelated), Math.max(1, Math.ceil(total * 0.3)));
   take([...rising], Math.max(1, risingMax));
   take(candidates.filter(c => c.kind === 'hot'), hotQuota);
   take(candidates.filter(c => c.kind === 'recent'), total);
@@ -627,19 +695,36 @@ export class NeteaseComments implements CommentProvider {
     }
     return { ...merged, comments };
   }
-  /** 百度百科歌曲词条；歌名、歌手或词条类型不匹配时明确不可用。 */
+  /** 百度百科创作背景 + 网易云音乐百科；两个来源独立，任一成功即返回。 */
   private async songBackground(song: Song, signal?: AbortSignal): Promise<SongBackground> {
     const key = String(song.id);
     const cached = this.songs.get(key);
     if (cached && cached.until > Date.now()) return cached.result;
     let result: SongBackground = { status: 'unavailable', reason: '歌曲背景读取失败' };
     try {
-      const note = await fetchBaiduSong(song.title, signal, this.request);
-      if (!note) result = { status: 'unavailable', reason: '没有找到歌曲词条' };
-      else if (!songBackgroundMatches(song, note)) result = { status: 'unavailable', reason: '词条与当前歌曲不匹配' };
-      else result = { status: 'ok', source: note.source, title: note.title, text: note.text,
-        ...(note.facts?.length ? { facts: note.facts } : {}), ...(note.url ? { url: note.url } : {}),
-        fetchedAt: new Date().toISOString() };
+      const [baiduResult, wikiResult] = await Promise.allSettled([
+        fetchBaiduSong(song.title, signal, this.request),
+        fetchSongWiki(song.id, signal, this.request),
+      ]);
+      if (signal?.aborted) throw new Error('歌曲背景读取已取消');
+      const note = baiduResult.status === 'fulfilled' ? baiduResult.value : null;
+      const wiki = wikiResult.status === 'fulfilled' ? wikiResult.value : null;
+      const baidu = note && songBackgroundMatches(song, note) ? note : null;
+      if (baidu || wiki) {
+        result = { status: 'ok',
+          source: [baidu?.source, wiki ? '网易云音乐百科' : ''].filter(Boolean).join(' + '),
+          title: baidu?.title ?? song.title,
+          ...(baidu?.text ? { text: baidu.text } : {}),
+          ...(baidu?.facts?.length ? { facts: baidu.facts } : {}),
+          ...(wiki ? { wiki } : {}),
+          ...(baidu?.url ? { url: baidu.url } : {}),
+          fetchedAt: new Date().toISOString() };
+      } else {
+        const baiduReason = baiduResult.status === 'rejected' ? '百度百科暂时不可用'
+          : note ? '词条与当前歌曲不匹配' : '没有找到歌曲词条';
+        const wikiReason = wikiResult.status === 'rejected' ? '网易云百科暂时不可用' : '网易云百科暂无此曲条目';
+        result = { status: 'unavailable', reason: `${baiduReason}；${wikiReason}` };
+      }
     } catch (e) {
       if (signal?.aborted) throw e;
       result = { status: 'unavailable', reason: e instanceof Error ? e.message : '歌曲背景读取失败' };
@@ -670,7 +755,7 @@ export class NeteaseComments implements CommentProvider {
             })
             : Promise.resolve(null),
         ]);
-        const excerpts = parseComments(raw, total);
+        const excerpts = parseComments(raw, total, backgroundTerms(songBackground, candidate.song));
         if (excerpts.length) {
           result = { status: 'ok', song: candidate.song, url: `https://music.163.com/song?id=${candidate.song.id}`,
             match: candidate.match, fetchedAt: new Date().toISOString(), excerpts,

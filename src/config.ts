@@ -29,11 +29,11 @@ export const configGroup: ConfigGroup = {
     type: 'object', title: '一起听 · 网易云音乐', properties: {
       'worlds.netease-music.commentReference': { type: 'boolean', title: '参考网易云评论区（联网）', 'x-hot': true },
       'worlds.netease-music.artistContext': { type: 'boolean', title: '联网搜索歌手背景资料', description: '开启后读取网易云歌手简介、代表作品与专辑，并补充百度百科概述和 Discogs 社区档案；与「参考网易云评论区」相互独立。', 'x-hot': true },
-      'worlds.netease-music.songContext': { type: 'boolean', title: '联网搜索歌曲背景资料', description: '开启后随评论参考读取百度百科歌曲词条，补充创作背景、词曲、专辑、发行日期与音乐风格；关闭评论区参考时不会单独请求。', 'x-hot': true },
+      'worlds.netease-music.songContext': { type: 'boolean', title: '联网搜索歌曲背景资料', description: '开启后随评论参考读取百度百科歌曲词条（创作背景、词曲、专辑、发行日期）和网易云音乐百科（曲风、标签、BPM、获奖、乐评、相似歌曲）；关闭评论区参考时不会单独请求。', 'x-hot': true },
       'worlds.netease-music.commentExcerpts': { type: 'integer', title: '评论参考条数', description: '3–50，默认 10。会先过滤求赞、打卡等低信息评论，再按信息量、点赞和新鲜度排序；条数越多上下文越长。', minimum: 3, maximum: 50, 'x-hot': true },
       'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
       'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },
-      'worlds.netease-music.cooldownSeconds': { type: 'integer', title: '主动评论最短间隔（秒）', description: '30–3600 秒。间隔越大评论越少；仅在曲目稳定且满足间隔时触发，不是定时重复评论。', minimum: 30, maximum: 3600, 'x-hot': true },
+      'worlds.netease-music.cooldownSeconds': { type: 'integer', title: '主动评论最短间隔（秒）', description: '30–3600 秒。间隔越大评论越少；陪听画像会按用户明确要求的互动频率自动缩放实际间隔。仅在曲目稳定且满足间隔时触发，不是定时重复评论。', minimum: 30, maximum: 3600, 'x-hot': true },
       'worlds.netease-music.maxCommentChars': { type: 'integer', title: '评论最大字数', description: '10–500，默认 80。包含标点、数字与外语字符；只约束音乐主动评论，由桌宠模型遵循，不截断其他聊天。', minimum: 10, maximum: 500, 'x-hot': true },
       'worlds.netease-music.sessionPattern': { type: 'string', title: '媒体会话应用名匹配（正则，重启生效）' },
       'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）' },

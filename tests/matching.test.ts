@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { artistKeys, matchSong, NeteaseComments, parseComments, trackLabels, type Song } from '../src/comments.ts';
+import { artistKeys, backgroundTerms, matchSong, NeteaseComments, parseComments, trackLabels, type Song } from '../src/comments.ts';
 import { commentLimits, defaults } from '../src/config.ts';
 import type { Track } from '../src/state.ts';
 
@@ -191,6 +191,31 @@ test('parseComments 过滤求赞、纯表情与泛泛短评，保留有信息量
   ]);
 });
 
+test('有歌曲背景时，提到专辑/发行信息的评论优先于更高赞的泛评', () => {
+  const terms = backgroundTerms({
+    status: 'ok',
+    facts: [{ label: '所属专辑', value: '《叶惠美》' }, { label: '发行日期', value: '2003年7月31日' }],
+  }, { title: '晴天', artists: ['周杰伦'] });
+  assert.ok(terms.some(term => term.text === '叶惠美' && term.weight >= 5));
+  const excerpts = parseComments({
+    hotComments: [
+      { content: '副歌的编曲层次一下就打开了，录音版本比现场更克制。', likedCount: 100 },
+      { content: '《叶惠美》这张专辑里最喜欢这首，2003 年买的第一盘磁带。', likedCount: 1 },
+    ],
+    comments: [],
+  }, 1, terms);
+  assert.equal(excerpts.length, 1);
+  assert.match(excerpts[0]!.text, /叶惠美/);
+});
+
+test('背景线索不把歌名和歌手本身当作关联词', () => {
+  const terms = backgroundTerms({
+    status: 'ok',
+    facts: [{ label: '原唱', value: '周杰伦' }, { label: '所属专辑', value: '《叶惠美》' }],
+  }, { title: '晴天', artists: ['周杰伦'] });
+  assert.deepEqual(terms.map(term => term.text), ['叶惠美']);
+});
+
 
 test('评论条数按配置抓取且热门约占六成', () => {
   const hotComments = Array.from({ length: 20 }, (_, i) => ({ content: `hot-${i}`, likedCount: i }));
@@ -234,8 +259,8 @@ test('评论条数超过 20 时翻页取更多候选', async () => {
   assert.ok(calls.some(c => c.includes('offset=100')));
 });
 
-test('开启歌曲背景时附带百度百科词条，并校验歌手', async () => {
-  const make = (artistInText: string) => {
+test('开启歌曲背景时附百度百科词条与网易云百科，百度词条需校验歌手', async () => {
+  const make = (artistInText: string, withWiki = true) => {
     const fake: typeof fetch = async input => {
       const url = new URL(String(input));
       const reply = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
@@ -253,6 +278,11 @@ test('开启歌曲背景时附带百度百科词条，并校验歌手', async ()
           card: [{ name: '所属专辑', value: ['《叶惠美》'] }, { name: '谱曲', value: [artistInText] }],
         });
       }
+      if (withWiki && url.hostname === 'interface.music.163.com') {
+        return reply({ code: 200, data: { blocks: [{ code: 'SONG_PLAY_ABOUT_SONG_BASIC', creatives: [
+          { creativeType: 'songTag', uiElement: { mainTitle: { title: '曲风' } }, resources: [{ uiElement: { mainTitle: { title: '流行-华语流行' } } }] },
+        ] }] } });
+      }
       return new Response('not found', { status: 404 });
     };
     return new NeteaseComments(fake);
@@ -262,10 +292,21 @@ test('开启歌曲背景时附带百度百科词条，并校验歌手', async ()
   assert.equal(ok.songBackground?.status, 'ok');
   assert.equal(ok.songBackground?.facts?.[0]?.label, '所属专辑');
   assert.match(ok.songBackground?.text ?? '', /周杰伦/);
+  assert.deepEqual(ok.songBackground?.wiki?.genres, ['流行-华语流行']);
+  assert.match(ok.songBackground?.source ?? '', /网易云音乐百科/);
+
+  // 网易云百科按歌曲 ID 读取，不依赖百度词条的歌手校验；百度词条不匹配时只丢弃百度部分。
   const wrong = await make('蔡依林').get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
   assert.equal(wrong.status, 'ok');
-  assert.equal(wrong.songBackground?.status, 'unavailable');
-  assert.match(wrong.songBackground?.reason ?? '', /不匹配/);
+  assert.equal(wrong.songBackground?.status, 'ok');
+  assert.equal(wrong.songBackground?.text, undefined);
+  assert.equal(wrong.songBackground?.facts, undefined);
+  assert.equal(wrong.songBackground?.source, '网易云音乐百科');
+
+  // 网易云百科不可用时，百度词条的歌手校验仍应明确标记不匹配。
+  const wrongNoWiki = await make('蔡依林', false).get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
+  assert.equal(wrongNoWiki.songBackground?.status, 'unavailable');
+  assert.match(wrongNoWiki.songBackground?.reason ?? '', /不匹配/);
 });
 
 test('最新评论里点赞最高的几条标记为 rising 并优先于普通最新评论', () => {
