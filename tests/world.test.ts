@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MusicWorld } from '../src/world.ts';
-import { defaults } from '../src/config.ts';
+import { configGroup, defaults } from '../src/config.ts';
 
 test('webUi 提供实时状态面板与快照', async () => {
   const world = new MusicWorld(defaults(), () => {});
@@ -24,4 +24,15 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(rank.status, 'unavailable');
   assert.deepEqual(rank.tracks, []);
   await assert.rejects(web.invoke!('live-status', 'other', []), /未知的状态请求/);
+});
+
+test('配置页明确支持网易云与 QQ 音乐，功能标签不带平台名', () => {
+  const schema = configGroup.schema as any;
+  assert.match(String(schema.description), /网易云音乐与 QQ 音乐/);
+  const props = schema.properties;
+  assert.equal(props['worlds.netease-music.commentReference'].title, '参考评论区（联网）');
+  assert.doesNotMatch(props['worlds.netease-music.commentReference'].title, /网易云/);
+  assert.doesNotMatch(props['worlds.netease-music.artistContext'].description, /网易云/);
+  assert.doesNotMatch(props['worlds.netease-music.songContext'].description, /网易云/);
+  assert.match(props['worlds.netease-music.sessionPattern'].title, /网易云音乐 \/ QQ 音乐/);
 });

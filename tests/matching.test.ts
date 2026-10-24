@@ -269,7 +269,7 @@ test('评论条数超过 20 时翻页取更多候选', async () => {
   assert.ok(calls.some(c => c.includes('offset=100')));
 });
 
-test('开启歌曲背景时附百度百科词条与网易云百科，百度词条需校验歌手', async () => {
+test('开启歌曲背景时附百度百科词条与歌曲百科，百度词条需校验歌手', async () => {
   const make = (artistInText: string, withWiki = true) => {
     const fake: typeof fetch = async input => {
       const url = new URL(String(input));
@@ -303,17 +303,17 @@ test('开启歌曲背景时附百度百科词条与网易云百科，百度词�
   assert.equal(ok.songBackground?.facts?.[0]?.label, '所属专辑');
   assert.match(ok.songBackground?.text ?? '', /周杰伦/);
   assert.deepEqual(ok.songBackground?.wiki?.genres, ['流行-华语流行']);
-  assert.match(ok.songBackground?.source ?? '', /网易云百科/);
+  assert.match(ok.songBackground?.source ?? '', /歌曲百科/);
 
-  // 网易云百科按歌曲 ID 读取，不依赖百度词条的歌手校验；百度词条不匹配时只丢弃百度部分。
+  // 歌曲百科按歌曲 ID 读取，不依赖百度词条的歌手校验；百度词条不匹配时只丢弃百度部分。
   const wrong = await make('蔡依林').get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
   assert.equal(wrong.status, 'ok');
   assert.equal(wrong.songBackground?.status, 'ok');
   assert.equal(wrong.songBackground?.text, undefined);
   assert.equal(wrong.songBackground?.facts, undefined);
-  assert.equal(wrong.songBackground?.source, '网易云百科');
+  assert.equal(wrong.songBackground?.source, '歌曲百科');
 
-  // 网易云百科不可用时，百度词条的歌手校验仍应明确标记不匹配。
+  // 歌曲百科不可用时，百度词条的歌手校验仍应明确标记不匹配。
   const wrongNoWiki = await make('蔡依林', false).get(track({ title: '晴天', artist: '周杰伦', album: '叶惠美' }), undefined, 4, true);
   assert.equal(wrongNoWiki.songBackground?.status, 'unavailable');
   assert.match(wrongNoWiki.songBackground?.reason ?? '', /不匹配/);
