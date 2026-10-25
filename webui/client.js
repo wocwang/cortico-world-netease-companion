@@ -22,6 +22,7 @@ export default {
             { k: zh ? '评论区' : 'Comments', v: s.comment },
             { k: zh ? '歌手资料' : 'Artist', v: s.artist },
             { k: zh ? '歌曲背景' : 'Song', v: s.song || '未启用' },
+            { k: zh ? '歌词' : 'Lyrics', v: s.lyrics || '未启用' },
             { k: zh ? '偏好记忆' : 'Preferences', v: s.preferences || '未启用' },
             { k: zh ? '互动频率' : 'Cadence', v: s.interaction || '未启用' },
             { k: zh ? '听歌记忆' : 'Listening', v: s.listening || '未启用' },
