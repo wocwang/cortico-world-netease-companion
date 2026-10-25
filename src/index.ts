@@ -4,7 +4,7 @@ import { defaults, type MusicConfig } from './config.ts';
 import { MusicWorld, toolDecls } from './world.ts';
 
 const definition: WorldDefinition<MusicConfig> = {
-  id: 'netease-music', label: '一起听', defaults,
+  id: 'netease-music', label: '听搭子', defaults,
   preflight(ctx) {
     if (process.platform !== 'win32') throw new Error('此版本需要 Windows 10 1809+ / Windows 11');
     if (ctx.cfg.sessionPattern === 'cloudmusic|netease|网易云')

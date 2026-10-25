@@ -1,8 +1,8 @@
 {
   "name": "better-cortico-world-netease-companion",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "type": "module",
-  "description": "一起听 World：本机曲目信息、切歌事件与节制的桌宠评论",
+  "description": "听搭子 World：本机曲目信息、切歌事件与节制的桌宠评论",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +28,7 @@
   "cortico": {
     "kind": "world",
     "api": 6,
-    "displayName": "一起听",
+    "displayName": "听搭子",
     "tags": [
       "coopanion",
       "companion",

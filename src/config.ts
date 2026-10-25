@@ -89,12 +89,12 @@ export const configGroups: ConfigGroup[] = [
   },
   {
     id: 'world:netease-music:listening', owner, schema: {
-      type: 'object', title: '一起听排名', description: '收录上限影响本地保存数量，显示范围只影响榜单展示；显示范围超过收录上限时按上限显示。',
+      type: 'object', title: '听歌排名', description: '收录上限影响本地保存数量，显示范围只影响榜单展示；显示范围超过收录上限时按上限显示。',
       properties: {
-        'worlds.netease-music.listeningTrackLimit': { type: 'integer', title: '一起听排名歌曲收录上限', description: '10–500，默认 100。超过上限时保留播放次数与歌手出现次数更高的歌曲；同分时随机替换，新听到的歌先进入候补。', minimum: 10, maximum: 500, 'x-hot': true },
-        'worlds.netease-music.listeningArtistLimit': { type: 'integer', title: '一起听排名歌手收录上限', description: '5–100，默认 30。超过上限时保留出现次数更高的歌手；同分时随机替换，新听到的歌手先进入候补。', minimum: 5, maximum: 100, 'x-hot': true },
-        'worlds.netease-music.listeningRankTrackRange': { type: 'integer', title: '一起听排名显示歌曲数', description: '1–500，默认 100。只改变榜单显示前多少名，不改变实际收录上限；超过收录上限时按收录上限显示。', minimum: 1, maximum: 500, 'x-hot': true },
-        'worlds.netease-music.listeningRankArtistRange': { type: 'integer', title: '一起听排名显示歌手数', description: '1–100，默认 30。只改变榜单显示前多少名，不改变实际收录上限；超过收录上限时按收录上限显示。', minimum: 1, maximum: 100, 'x-hot': true },
+        'worlds.netease-music.listeningTrackLimit': { type: 'integer', title: '听歌排名歌曲收录上限', description: '10–500，默认 100。超过上限时保留播放次数与歌手出现次数更高的歌曲；同分时随机替换，新听到的歌先进入候补。', minimum: 10, maximum: 500, 'x-hot': true },
+        'worlds.netease-music.listeningArtistLimit': { type: 'integer', title: '听歌排名歌手收录上限', description: '5–100，默认 30。超过上限时保留出现次数更高的歌手；同分时随机替换，新听到的歌手先进入候补。', minimum: 5, maximum: 100, 'x-hot': true },
+        'worlds.netease-music.listeningRankTrackRange': { type: 'integer', title: '听歌排名显示歌曲数', description: '1–500，默认 100。只改变榜单显示前多少名，不改变实际收录上限；超过收录上限时按收录上限显示。', minimum: 1, maximum: 500, 'x-hot': true },
+        'worlds.netease-music.listeningRankArtistRange': { type: 'integer', title: '听歌排名显示歌手数', description: '1–100，默认 30。只改变榜单显示前多少名，不改变实际收录上限；超过收录上限时按收录上限显示。', minimum: 1, maximum: 100, 'x-hot': true },
       },
     },
   },

@@ -140,7 +140,7 @@ export class MusicWorld implements World {
       // 顶部徽章不随运行状态刷新，已移除；状态统一由「实时状态」面板每 2 秒读取。
       panels: [
         { id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' },
-        { id: 'listening-ranking', title: '一起听排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
+        { id: 'listening-ranking', title: '听歌排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
         { id: 'settings', title: '设置', description: '按用途折叠的陪听、背景资料、歌词、排名与读取设置' },
       ],
       ...(this.preferences || this.listening ? { storage: [
@@ -180,7 +180,7 @@ export class MusicWorld implements World {
           error: this.error || null,
         };
       },
-      promptDocs: [{ key: 'worlds.netease-music.envPrompt', title: '一起听 · 陪听指导', description: '曲目信息边界与评论节奏', role: 'envPrompt',
+      promptDocs: [{ key: 'worlds.netease-music.envPrompt', title: '听搭子 · 陪听指导', description: '曲目信息边界与评论节奏', role: 'envPrompt',
         path: fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url)), vars: [{ name: 'music.maxChars', description: '音乐评论最大字数，现读配置' },
           { name: 'music.commentExcerpts', description: '评论参考条数，现读配置' },
           { name: 'music.artistContext', description: '歌手资料开关当前状态（开启/关闭）' },

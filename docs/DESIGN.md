@@ -28,6 +28,8 @@
 
 新增 `commentReference` 默认 true；老部署缺少此字段时也按启用处理，可在配置页关闭；`commentExcerpts` 缺省按 10 条处理。网络请求不使用桌宠或网易云的账号凭据。验证时直连网易云取得歌曲匹配与默认 10 条评论摘录，不读取评论者资料。
 
+1.9.0 显示名改为「听搭子」：World 标签、市场显示名、设置面板与提示词标题同步更新，「一起听排名」面板和配置项改名为「听歌排名」。World ID `netease-music`、配置路径和 npm 包名保持不变，旧部署无需迁移。
+
 1.8.0 移除标准配置页，配置入口统一到 World 页的「设置」面板，避免同一套字段出现两份表单。`settingsPayload()` 仍从 `configGroups` 读取分组、范围和当前值；面板保存改为 `ctx.invoke('save')`，由 `normalizeConfigPatch` 按同一份声明校验类型、数值范围与正则，再调用 World 的 `persist` 写入 `config.json` 并更新活配置。媒体读取三项标为 `x-hot=false`，修改后重启 World 生效。
 
 1.7.0 曾把配置按用途拆成五个 `ConfigGroup`（陪听与评论、联网背景资料、歌词、一起听排名、媒体读取），并在 World 页增加「设置」面板；1.8.0 起标准配置页已移除。

@@ -288,7 +288,7 @@ export class ListeningMemoryStore {
     };
   }
 
-  /** 供「一起听排名」面板读取：按出现次数排序，并分别套用收录上限与显示范围。 */
+  /** 供「听歌排名」面板读取：按出现次数排序，并分别套用收录上限与显示范围。 */
   async ranking(): Promise<ListeningRanking> {
     const data = await this.load();
     const limits = this.limitsNow();

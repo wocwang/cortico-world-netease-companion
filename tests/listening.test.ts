@@ -85,7 +85,7 @@ test('超过歌曲上限时淘汰播放次数加歌手次数最低的旧歌，�
   }
 });
 
-test('一起听排名按次数排序，并分别套用收录上限与显示范围', async () => {
+test('听歌排名按次数排序，并分别套用收录上限与显示范围', async () => {
   const dir = await temp();
   try {
     const store = new ListeningMemoryStore(dir, () => ({ tracks: 10, artists: 5, rankTracks: 4, rankArtists: 2 }), () => 0);
