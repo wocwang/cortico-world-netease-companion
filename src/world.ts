@@ -5,7 +5,7 @@ import { WindowsReader, type Reader } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
 import { INTERACTION_LABELS, INTERACTION_LEVELS, interactionFactor, profileSummary, PreferenceStore, type InteractionLevel } from './preferences.ts';
-import { ListeningMemoryStore, LISTENING_DWELL_MS } from './listening.ts';
+import { ListeningMemoryStore, LISTENING_DWELL_MS, ReplayCounter } from './listening.ts';
 
 export const toolDecls: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'music_now_playing', description: 'Read the latest locally observed music metadata and freshness. No audio is available.', tags: ['read'], parameters: { type: 'object', properties: {}, additionalProperties: false } },
@@ -63,6 +63,10 @@ export class MusicWorld implements World {
   private memoryKey = '';
   private memorySince = 0;
   private memoryRecorded = '';
+  private replays = new ReplayCounter();
+  private playKey = '';
+  private durationMs = 0;
+  private durationToken = 0;
   constructor(private cfg: MusicConfig, private persist: (patch: Partial<MusicConfig>) => void, reader?: Reader,
     private comments: CommentProvider = new NeteaseComments(), preferencesDir = '') {
     this.reader = reader ?? new WindowsReader(cfg);
@@ -227,6 +231,10 @@ export class MusicWorld implements World {
     this.memoryKey = '';
     this.memorySince = 0;
     this.memoryRecorded = '';
+    this.replays = new ReplayCounter();
+    this.playKey = '';
+    this.durationMs = 0;
+    this.durationToken++;
     this.reader.start(snapshot => {
       if (generation !== this.generation) return;
       this.observe(snapshot);
@@ -252,17 +260,39 @@ export class MusicWorld implements World {
   /** 只有一首歌连续稳定 10 秒才写入听歌记忆，避免快切把每首都记成一次。 */
   private remember(before: string, after: string): void {
     const now = Date.now();
+    const track = this.state.current;
     if (after !== before) {
       this.memoryKey = after;
       this.memorySince = now;
       this.memoryRecorded = '';
+      this.playKey = after;
+      this.durationMs = 0;
+      this.durationToken++;
+      if (track && after) {
+        this.replays.reset(after, track, now);
+        this.requestDuration(track, after);
+      }
     }
-    const track = this.state.current;
     if (!this.listening || !track || !after || after !== this.memoryKey) return;
+    const smtcDuration = Math.round((track.durationSeconds ?? 0) * 1000);
+    if (smtcDuration >= 30_000 && this.durationMs < 30_000) this.durationMs = smtcDuration;
+    const replays = this.replays.update(after, track, this.durationMs, now);
+    if (replays > 0) void this.listening.record(track, now, replays);
     if (this.memoryRecorded === after || track.status === 'paused') return;
     if (now - this.memorySince < LISTENING_DWELL_MS) return;
     this.memoryRecorded = after;
     void this.listening.record(track, now);
+  }
+  /** 优先用 SMTC 时长；没有时通过一次在线搜索读取曲目时长，用于无播放位置时的循环计数。 */
+  private requestDuration(track: Track, key: string): void {
+    this.durationMs = Math.round((track.durationSeconds ?? 0) * 1000);
+    if (this.durationMs >= 30_000) return;
+    if (!this.referenceEnabled() || !this.comments.duration) return;
+    const token = this.durationToken;
+    void this.comments.duration(track, this.abort.signal).then(ms => {
+      if (token !== this.durationToken || this.playKey !== key) return;
+      if (ms && ms >= 30_000) this.durationMs = ms;
+    }).catch(() => {});
   }
   private async withdrawQueued(): Promise<void> {
     const cursors = this.queued.splice(0);

@@ -8,8 +8,8 @@
 
 ## 当前状态
 
-- 本分支版本：`1.4.1`，MIT，Windows，World API 6。
-- 发布包名：`better-cortico-world-netease-companion`（历史发布 1.0.0、1.0.1、1.2.0、1.3.0、1.4.0；1.1.0 未单独发布，内容包含在 1.2.0 中；当前版本 1.4.1，发布状态以 npm registry 为准）。
+- 本分支版本：`1.5.0`，MIT，Windows，World API 6。
+- 发布包名：`better-cortico-world-netease-companion`（历史发布 1.0.0、1.0.1、1.2.0、1.3.0、1.4.0、1.4.1；1.1.0 未单独发布，内容包含在 1.2.0 中；当前版本 1.5.0，发布状态以 npm registry 为准）。
 - 市场显示名：`一起听`；原名 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有，不能覆盖。
 - npm 账号已登录；发布时需要账号所有者提供 2FA 动态码（`--otp=`）。
 

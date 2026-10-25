@@ -2,7 +2,7 @@ import type { Track } from './state.ts';
 import { collectBackground, fetchBaiduSong, type BackgroundNote } from './sources.ts';
 import { fetchSongWiki, type SongWiki } from './wiki.ts';
 
-export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number }
+export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number; durationMs?: number }
 export interface SongBackground {
   status: 'ok' | 'unavailable';
   reason?: string;
@@ -40,6 +40,7 @@ export interface ArtistProfile {
 export interface CommentProvider {
   get(track: Track, signal?: AbortSignal, maxExcerpts?: number, withSongBackground?: boolean): Promise<CommentReference>;
   getArtist(track: Track, signal?: AbortSignal): Promise<ArtistProfile>;
+  duration?(track: Track, signal?: AbortSignal): Promise<number | null>;
 }
 const clean = (v: unknown, max = 240) => typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
 const APP_SUFFIX = /\s*[-–—]\s*(?:网易云音乐|NetEase Cloud Music|QQ音乐|QQ Music)\s*$/i;
@@ -162,9 +163,11 @@ function toSong(s: any): Song | null {
     .map((a: any) => clean(a?.name)).filter(Boolean);
   const aliases = (Array.isArray(s?.alia) ? s.alia : Array.isArray(s?.alias) ? s.alias : [])
     .map((a: any) => clean(typeof a === 'string' ? a : a?.name)).filter(Boolean);
+  const duration = Number.isFinite(s?.duration) ? s.duration : Number.isFinite(s?.dt) ? s.dt : 0;
   return Number.isSafeInteger(s?.id) && s.id > 0 && clean(s.name)
     ? { id: s.id, title: clean(s.name), artists, album: clean((s.album ?? s.al)?.name), aliases,
-        ...(Number.isFinite(s.popularity) ? { popularity: Math.max(0, Math.min(100, s.popularity)) } : {}) } : null;
+        ...(Number.isFinite(s.popularity) ? { popularity: Math.max(0, Math.min(100, s.popularity)) } : {}),
+        ...(duration > 0 ? { durationMs: Math.round(duration) } : {}) } : null;
 }
 export function parseSongs(raw: any, max = 50): Song[] {
   const list = Array.isArray(raw?.result?.songs) ? raw.result.songs : Array.isArray(raw?.songs) ? raw.songs : null;
@@ -502,6 +505,7 @@ export class NeteaseComments implements CommentProvider {
   private artists = new Map<string, { id: number | null; until: number }>();
   private profiles = new Map<string, { until: number; result: ArtistProfile }>();
   private songs = new Map<string, { until: number; result: SongBackground }>();
+  private durations = new Map<string, { until: number; ms: number | null }>();
   private blockedUntil = 0;
   constructor(private request: typeof fetch = fetch) {}
   private async json(path: string, signal?: AbortSignal): Promise<any> {
@@ -733,6 +737,23 @@ export class NeteaseComments implements CommentProvider {
     this.songs.set(key, { until: Date.now() + (result.status === 'ok' ? 30 * 60_000 : 5 * 60_000), result });
     while (this.songs.size > 40) this.songs.delete(this.songs.keys().next().value!);
     return result;
+  }
+  /** 读取当前匹配歌曲的时长，用于没有播放位置时估算单曲循环次数。 */
+  async duration(track: Track, signal?: AbortSignal): Promise<number | null> {
+    signal?.throwIfAborted();
+    const key = trackKey(track);
+    const cached = this.durations.get(key);
+    if (cached && cached.until > Date.now()) return cached.ms;
+    let ms: number | null = null;
+    try {
+      const ranked = await this.find(track, signal);
+      ms = ranked[0]?.song.durationMs ?? null;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+    }
+    this.durations.set(key, { until: Date.now() + (ms ? 24 * 60 * 60_000 : 5 * 60_000), ms });
+    while (this.durations.size > 100) this.durations.delete(this.durations.keys().next().value!);
+    return ms;
   }
   async get(track: Track, signal?: AbortSignal, maxExcerpts = 10, withSongBackground = false): Promise<CommentReference> {
     const total = Math.max(1, Math.min(50, Math.floor(Number.isFinite(maxExcerpts) ? maxExcerpts : 10)));

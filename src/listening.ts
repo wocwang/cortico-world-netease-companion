@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
+import type { Track } from './state.ts';
 
 export interface ListeningLimits { tracks: number; artists: number; rankTracks?: number; rankArtists?: number }
 export interface ResolvedListeningLimits { tracks: number; artists: number; rankTracks: number; rankArtists: number }
@@ -91,6 +92,55 @@ function validArtist(v: unknown): v is ListeningArtist {
     && Number.isFinite(a.count) && a.count > 0 && typeof a.lastAt === 'string';
 }
 
+/**
+ * 单曲循环计数：优先用 SMTC 播放位置从结尾回到开头的跳变；
+ * 没有位置时按播放中的实际时间累计，每满一个曲目时长记一次。
+ */
+export class ReplayCounter {
+  private key = '';
+  private playMs = 0;
+  private lastAt = 0;
+  private lastPos?: number;
+  private positionSeen = false;
+  reset(key: string, track: Track, now: number): void {
+    this.key = key;
+    const pos = track.positionSeconds;
+    this.playMs = pos !== undefined && pos > 0 ? pos * 1000 : 0;
+    this.lastAt = now;
+    this.lastPos = pos;
+    this.positionSeen = pos !== undefined && pos > 0;
+  }
+  update(key: string, track: Track, durationMs: number, now: number): number {
+    if (key !== this.key) { this.reset(key, track, now); return 0; }
+    const delta = now - this.lastAt;
+    this.lastAt = now;
+    if (track.status !== 'playing') return 0;
+    const gap = delta <= 0 || delta > 5000;
+    const pos = track.positionSeconds;
+    if (pos !== undefined && pos > 0 && !this.positionSeen) {
+      this.positionSeen = true;
+      this.playMs = pos * 1000;
+      this.lastPos = pos;
+      return 0;
+    }
+    if (this.positionSeen && pos !== undefined) {
+      if (this.lastPos !== undefined && this.lastPos > 5 && pos + 3 < this.lastPos) {
+        const replay = durationMs >= 30_000 && this.lastPos * 1000 >= durationMs * 0.5 && pos <= 5 ? 1 : 0;
+        this.playMs = pos * 1000;
+        this.lastPos = pos;
+        return replay;
+      }
+      this.lastPos = pos;
+      return 0;
+    }
+    if (gap || !durationMs || durationMs < 30_000) return 0;
+    this.playMs += delta;
+    let replays = 0;
+    while (this.playMs >= durationMs) { this.playMs -= durationMs; replays++; }
+    return replays;
+  }
+}
+
 export class ListeningMemoryStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
@@ -132,10 +182,11 @@ export class ListeningMemoryStore {
   }
 
   /** 记录一次稳定收听。失败时静默返回 false，不影响播放器读取。 */
-  async record(track: { title?: string; artist?: string; album?: string }, at = Date.now()): Promise<boolean> {
+  async record(track: { title?: string; artist?: string; album?: string }, at = Date.now(), count = 1): Promise<boolean> {
     const title = text(track.title);
     if (!title) return false;
     const artist = text(track.artist), album = text(track.album);
+    const times = Math.max(1, Math.min(100, Math.floor(Number.isFinite(count) ? count : 1)));
     const atIso = new Date(at).toISOString();
     try {
       await this.queue(async () => {
@@ -144,21 +195,21 @@ export class ListeningMemoryStore {
         const k = key(title, artist, album);
         const existing = data.tracks.find(t => key(t.title, t.artist, t.album) === k);
         if (existing) {
-          existing.count++;
+          existing.count += times;
           existing.lastAt = atIso;
           existing.title = title;
           existing.artist = artist;
           existing.album = album;
         } else {
-          data.tracks.push({ title, artist, album, count: 1, firstAt: atIso, lastAt: atIso });
+          data.tracks.push({ title, artist, album, count: times, firstAt: atIso, lastAt: atIso });
         }
         const artistKey = artist ? norm(artist) : '';
         if (artist) {
           const found = data.artists.find(a => norm(a.name) === artistKey);
-          if (found) { found.count++; found.lastAt = atIso; found.name = artist; }
-          else data.artists.push({ name: artist, count: 1, lastAt: atIso });
+          if (found) { found.count += times; found.lastAt = atIso; found.name = artist; }
+          else data.artists.push({ name: artist, count: times, lastAt: atIso });
         }
-        data.totalPlays++;
+        data.totalPlays += times;
         this.trimTracks(data, limits.tracks, k);
         this.trimArtists(data, limits.artists, artistKey);
         data.tracks.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));

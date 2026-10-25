@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { MusicWorld } from '../src/world.ts';
 import { configGroup, defaults } from '../src/config.ts';
+import { parseSnapshot } from '../src/state.ts';
 
 test('webUi 提供实时状态面板与快照', async () => {
   const world = new MusicWorld(defaults(), () => {});
@@ -24,6 +25,15 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(rank.status, 'unavailable');
   assert.deepEqual(rank.tracks, []);
   await assert.rejects(web.invoke!('live-status', 'other', []), /未知的状态请求/);
+});
+
+test('解析媒体快照时保留播放位置与曲目时长', () => {
+  const snap = parseSnapshot({ track: {
+    title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic',
+    status: 'playing', method: 'smtc', positionSeconds: 12, durationSeconds: 269,
+  } });
+  assert.equal(snap.track?.positionSeconds, 12);
+  assert.equal(snap.track?.durationSeconds, 269);
 });
 
 test('配置页明确支持网易云与 QQ 音乐，功能标签不带平台名', () => {

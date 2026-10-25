@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ListeningMemoryStore, LISTENING_DWELL_MS } from '../src/listening.ts';
+import { ListeningMemoryStore, LISTENING_DWELL_MS, ReplayCounter } from '../src/listening.ts';
 import { MusicWorld } from '../src/world.ts';
 import { defaults, listeningLimits } from '../src/config.ts';
+import type { Track } from '../src/state.ts';
 
 const temp = () => mkdtemp(join(tmpdir(), 'netease-listening-'));
+const media = (over: Partial<Track> = {}): Track => ({
+  title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic', status: 'playing', method: 'smtc', ...over,
+});
 
 test('听歌记忆聚合曲目与歌手，并给出常听摘要和当前曲目关联', async () => {
   const dir = await temp();
@@ -121,6 +125,46 @@ test('排名显示范围可配置，并受收录上限约束', () => {
   cfg.listeningRankTrackRange = 0;
   cfg.listeningRankArtistRange = 0;
   assert.deepEqual(listeningLimits(cfg), { tracks: 500, artists: 5, rankTracks: 1, rankArtists: 1 });
+});
+
+test('没有播放位置时按曲目时长累计循环，暂停时间不计', () => {
+  const counter = new ReplayCounter();
+  const t = media();
+  let now = 0, plays = 0;
+  counter.reset('k', t, now);
+  for (now = 2000; now <= 60_000; now += 2000) plays += counter.update('k', t, 60_000, now);
+  assert.equal(plays, 1);
+  for (let i = 0; i < 15; i++) { now += 2000; plays += counter.update('k', media({ status: 'paused' }), 60_000, now); }
+  assert.equal(plays, 1);
+  for (let i = 0; i < 30; i++) { now += 2000; plays += counter.update('k', t, 60_000, now); }
+  assert.equal(plays, 2);
+});
+
+test('有播放位置时按结尾回到开头计一次，普通回拖不计数', () => {
+  const counter = new ReplayCounter();
+  let plays = 0;
+  counter.reset('k', media({ positionSeconds: 0 }), 0);
+  plays += counter.update('k', media({ positionSeconds: 2 }), 60_000, 2000);
+  plays += counter.update('k', media({ positionSeconds: 58 }), 60_000, 58_000);
+  plays += counter.update('k', media({ positionSeconds: 0 }), 60_000, 60_000);
+  assert.equal(plays, 1);
+  plays += counter.update('k', media({ positionSeconds: 2 }), 60_000, 62_000);
+  plays += counter.update('k', media({ positionSeconds: 30 }), 60_000, 90_000);
+  plays += counter.update('k', media({ positionSeconds: 10 }), 60_000, 100_000);
+  assert.equal(plays, 1);
+});
+
+test('听歌记忆支持一次累加多次循环', async () => {
+  const dir = await temp();
+  try {
+    const store = new ListeningMemoryStore(dir);
+    const at = Date.parse('2026-10-25T10:00:00Z');
+    await store.record({ title: '晴天', artist: '周杰伦', album: '叶惠美' }, at, 3);
+    const view = await store.view();
+    assert.equal(view.totalPlays, 3);
+    assert.equal(view.topTracks[0].count, 3);
+    assert.equal(view.topArtists[0].count, 3);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test('听歌记忆可持久化并单独清除', async () => {

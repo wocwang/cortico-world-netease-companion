@@ -47,7 +47,11 @@ while ($true) {
                     }
                     $track = @{ title = $props.Title; artist = $props.Artist; album = $props.AlbumTitle;
                         app = $selected.SourceAppUserModelId; status = $status; method = 'smtc' }
-                    try { $track.positionSeconds = $selected.GetTimelineProperties().Position.TotalSeconds } catch {}
+                    try {
+                        $timeline = $selected.GetTimelineProperties()
+                        $track.positionSeconds = $timeline.Position.TotalSeconds
+                        if ($timeline.EndTime.TotalSeconds -gt 0) { $track.durationSeconds = $timeline.EndTime.TotalSeconds }
+                    } catch {}
                 }
             }
         }

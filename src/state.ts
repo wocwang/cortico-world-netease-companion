@@ -8,6 +8,7 @@ export interface Track {
   status: 'playing' | 'paused' | 'unknown';
   method: 'smtc' | 'window-title';
   positionSeconds?: number;
+  durationSeconds?: number;
 }
 export interface Snapshot { track: Track | null; error?: string }
 const clean = (s: unknown) => typeof s === 'string' ? s.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300) : '';
@@ -23,7 +24,9 @@ export function parseSnapshot(input: unknown): Snapshot {
     status: t.status === 'playing' || t.status === 'paused' ? t.status : 'unknown',
     method: t.method as Track['method'],
     ...(typeof t.positionSeconds === 'number' && Number.isFinite(t.positionSeconds) && t.positionSeconds >= 0
-      ? { positionSeconds: t.positionSeconds } : {}) } };
+      ? { positionSeconds: t.positionSeconds } : {}),
+    ...(typeof t.durationSeconds === 'number' && Number.isFinite(t.durationSeconds) && t.durationSeconds > 0
+      ? { durationSeconds: t.durationSeconds } : {}) } };
 }
 const key = (t: Track) => JSON.stringify([t.title, t.artist, t.album]);
 const seconds = (v: number, fallback: number, min: number, max: number) =>

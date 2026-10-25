@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { artistKeys, backgroundTerms, matchSong, NeteaseComments, parseComments, trackLabels, type Song } from '../src/comments.ts';
+import { artistKeys, backgroundTerms, matchSong, NeteaseComments, parseComments, parseSongs, trackLabels, type Song } from '../src/comments.ts';
 import { commentLimits, defaults } from '../src/config.ts';
 import type { Track } from '../src/state.ts';
 
@@ -70,6 +70,28 @@ test('QQ音乐窗口标题后缀或前缀会被移除并可匹配', () => {
     { title: '起风了', artist: '买辣椒也用券' },
     { title: '买辣椒也用券', artist: '起风了' },
   ]);
+});
+
+test('parseSongs 保留曲目时长', () => {
+  const songs = parseSongs({ result: { songs: [{
+    id: 1, name: '晴天', artists: [{ name: '周杰伦' }], album: { name: '叶惠美' }, duration: 269000,
+  }] } });
+  assert.equal(songs[0]?.durationMs, 269000);
+});
+
+test('duration 读取匹配歌曲时长并缓存', async () => {
+  let calls = 0;
+  const request = (async () => {
+    calls++;
+    return new Response(JSON.stringify({ code: 200, result: { songs: [{
+      id: 1, name: '晴天', artists: [{ name: '周杰伦' }], album: { name: '叶惠美' }, duration: 269000,
+    }] } }));
+  }) as typeof fetch;
+  const comments = new NeteaseComments(request);
+  const track: Track = { title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic', status: 'playing', method: 'smtc' };
+  assert.equal(await comments.duration(track), 269000);
+  assert.equal(await comments.duration(track), 269000);
+  assert.equal(calls, 1);
 });
 
 test('artistKeys 包含原名、括号内别名和分隔后的合作歌手', () => {
