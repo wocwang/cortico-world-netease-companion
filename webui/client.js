@@ -1,9 +1,215 @@
 /**
- * 实时状态面板。宿主的顶部徽章只在开页或手动刷新时取一次，这里在面板打开期间
- * 每 2 秒读取一次 World 快照，让读取状态、曲目、评论区与歌手资料保持最新。
+ * 设置页按用途折叠配置分组；实时状态页在打开期间每 2 秒读取一次 World 快照。
+ * 宿主的顶部徽章只在开页或手动刷新时取一次。
  */
 export default {
   panels: {
+    'settings': {
+      mount(ctx) {
+        const ui = ctx.ui;
+        const zh = String(ctx.language ?? 'zh').startsWith('zh');
+        const text = {
+          refresh: zh ? '刷新' : 'Refresh',
+          autoSave: zh ? '修改后自动保存' : 'Auto-save',
+          restart: zh ? '重启 World' : 'Restart World',
+          on: zh ? '开启' : 'On',
+          off: zh ? '关闭' : 'Off',
+          saving: zh ? '正在保存…' : 'Saving…',
+          saved: zh ? '已保存' : 'Saved',
+          empty: zh ? '没有可显示的配置项' : 'No settings to show',
+          invalidNumber: title => zh ? `「${title}」不是有效数字，未保存` : `"${title}" is not a valid number; not saved`,
+          outOfRange: (title, min, max) => zh
+            ? `「${title}」需在 ${min}–${max} 之间，未保存`
+            : `"${title}" must be between ${min} and ${max}; not saved`,
+          invalidRegex: zh ? '正则表达式无效，未保存' : 'Invalid regular expression; not saved',
+          saveFailed: msg => zh ? `保存失败：${msg}` : `Save failed: ${msg}`,
+          loadFailed: msg => zh ? `读取配置失败：${msg}` : `Could not read settings: ${msg}`,
+        };
+
+        const bar = ui.rowbar();
+        const status = ui.msgline('');
+        const host = ui.h('div');
+        bar.append(
+          ui.pill(text.autoSave, 'plain'),
+          ui.h('span', 'grow'),
+          ui.button(text.refresh, { size: 'sm', onClick: () => void load() }),
+        );
+        ctx.root.append(bar, host, status);
+
+        let groups = [];
+
+        const valueOf = (group, key) => {
+          const reader = group.readers.find(item => item.key === key);
+          return reader ? reader.read() : undefined;
+        };
+        const onOff = value => value === true ? text.on : value === false ? text.off : '—';
+        const summary = group => {
+          const get = key => valueOf(group, key);
+          switch (group.kind) {
+            case 'commentary':
+              return zh
+                ? `评论 ${onOff(get('commentary'))} · 稳定 ${get('settleSeconds') ?? '—'} 秒 · 间隔 ${get('cooldownSeconds') ?? '—'} 秒 · ${get('maxCommentChars') ?? '—'} 字 · ${get('commentExcerpts') ?? '—'} 条`
+                : `Comments ${onOff(get('commentary'))} · settle ${get('settleSeconds') ?? '—'}s · gap ${get('cooldownSeconds') ?? '—'}s · ${get('maxCommentChars') ?? '—'} chars · ${get('commentExcerpts') ?? '—'} excerpts`;
+            case 'context':
+              return zh
+                ? `评论区 ${onOff(get('commentReference'))} · 歌手 ${onOff(get('artistContext'))} · 歌曲 ${onOff(get('songContext'))}`
+                : `Comments ${onOff(get('commentReference'))} · artist ${onOff(get('artistContext'))} · song ${onOff(get('songContext'))}`;
+            case 'lyrics':
+              return zh
+                ? `歌词 ${onOff(get('lyricsContext'))} · 翻译 ${onOff(get('lyricsTranslation'))} · ${get('lyricsLines') ?? '—'} 行`
+                : `Lyrics ${onOff(get('lyricsContext'))} · translation ${onOff(get('lyricsTranslation'))} · ${get('lyricsLines') ?? '—'} lines`;
+            case 'listening':
+              return zh
+                ? `收录 ${get('listeningTrackLimit') ?? '—'} 首 / ${get('listeningArtistLimit') ?? '—'} 位 · 显示 ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`
+                : `Store ${get('listeningTrackLimit') ?? '—'} / ${get('listeningArtistLimit') ?? '—'} · show ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`;
+            case 'reader':
+              return zh
+                ? `窗口降级 ${onOff(get('windowFallback'))} · SMTC 正则 ${get('sessionPattern') ? '已设置' : '—'}`
+                : `Window fallback ${onOff(get('windowFallback'))} · SMTC pattern ${get('sessionPattern') ? 'set' : '—'}`;
+            default:
+              return `${group.fields.length} ${zh ? '项' : 'fields'}`;
+          }
+        };
+
+        const invalid = message => {
+          status.classList.add('bad');
+          status.textContent = message;
+        };
+
+        let timers = new Map();
+        const queueSave = group => {
+          group.sheet.note.textContent = summary(group);
+          timers.get(group.id)?.dispose();
+          timers.set(group.id, ctx.timeout(() => {
+            timers.delete(group.id);
+            void save(group);
+          }, 400));
+        };
+
+        const save = async group => {
+          if (ctx.signal.aborted) return;
+          const values = {};
+          for (const reader of group.readers) {
+            if (!reader.read) continue;
+            const value = reader.read();
+            if (value === undefined) {
+              invalid(text.invalidNumber(reader.title));
+              return;
+            }
+            if ((reader.type === 'integer' || reader.type === 'number')
+              && typeof value === 'number') {
+              if (reader.minimum != null && value < reader.minimum) {
+                invalid(text.outOfRange(reader.title, reader.minimum, reader.maximum));
+                return;
+              }
+              if (reader.maximum != null && value > reader.maximum) {
+                invalid(text.outOfRange(reader.title, reader.minimum, reader.maximum));
+                return;
+              }
+            }
+            if ((reader.key === 'sessionPattern' || reader.key === 'windowFallbackProcess')
+              && typeof value === 'string') {
+              try { new RegExp(value); }
+              catch { invalid(text.invalidRegex); return; }
+            }
+            values[reader.path] = value;
+          }
+          try {
+            status.classList.remove('bad');
+            status.textContent = text.saving;
+            await ctx.setConfig(group.id, values);
+            if (ctx.signal.aborted) return;
+            status.textContent = text.saved;
+            group.sheet.note.textContent = summary(group);
+          } catch (e) {
+            if (e && e.name === 'AbortError') return;
+            invalid(text.saveFailed(e instanceof Error ? e.message : String(e)));
+          }
+        };
+
+        const control = (group, field) => {
+          const changed = () => queueSave(group);
+          if (field.type === 'boolean') {
+            const box = ui.checkbox(text.on, { checked: field.value === true, onChange: changed });
+            return { node: box.el, read: () => box.checked };
+          }
+          if (field.type === 'integer' || field.type === 'number') {
+            const input = ui.input({
+              type: 'number',
+              value: field.value == null ? '' : String(field.value),
+              onChange: changed,
+            });
+            if (field.minimum != null) input.min = String(field.minimum);
+            if (field.maximum != null) input.max = String(field.maximum);
+            input.step = field.type === 'integer' ? '1' : 'any';
+            return {
+              node: input,
+              read: () => {
+                const raw = input.value.trim();
+                if (raw === '') return undefined;
+                const value = Number(raw);
+                if (!Number.isFinite(value)) return undefined;
+                return field.type === 'integer' ? Math.floor(value) : value;
+              },
+            };
+          }
+          if (field.type === 'string') {
+            const input = ui.input({
+              type: 'text',
+              value: field.value == null ? '' : String(field.value),
+              cls: field.key === 'sessionPattern' || field.key === 'windowFallbackProcess' ? 'mono' : undefined,
+              onChange: changed,
+            });
+            return { node: input, read: () => input.value };
+          }
+          return { node: ui.h('span', 'tdesc', String(field.value ?? '')), read: null };
+        };
+
+        const load = async () => {
+          for (const timer of timers.values()) timer.dispose();
+          timers.clear();
+          status.classList.remove('bad');
+          status.textContent = '';
+          let payload;
+          try {
+            payload = await ctx.invoke('read');
+          } catch (e) {
+            invalid(text.loadFailed(e instanceof Error ? e.message : String(e)));
+            return;
+          }
+          if (ctx.signal.aborted) return;
+          groups = (Array.isArray(payload?.groups) ? payload.groups : []).map(group => ({ ...group, readers: [] }));
+          host.replaceChildren();
+          for (const group of groups) {
+            const sheet = ui.foldSheet(`settings-${group.kind}`, {
+              title: group.title, desc: group.description || undefined,
+            });
+            group.sheet = sheet;
+            for (const field of group.fields) {
+              const row = ui.h('div', 'trow');
+              const label = ui.h('span', 'tlabel', field.title);
+              if (!field.hot) label.appendChild(ui.h('span', 'ttag', text.restart));
+              const fieldWrap = ui.h('div', 'tfield');
+              const built = control(group, field);
+              fieldWrap.appendChild(built.node);
+              row.append(label, fieldWrap, ui.h('span', 'tdesc', field.description || ''));
+              sheet.body.appendChild(row);
+              if (built.read) {
+                group.readers.push({
+                  key: field.key, path: field.path, title: field.title, type: field.type,
+                  minimum: field.minimum, maximum: field.maximum, read: built.read,
+                });
+              }
+            }
+            sheet.note.textContent = summary(group);
+            host.appendChild(sheet.el);
+          }
+          if (!groups.length) host.appendChild(ui.placeholder(text.empty));
+        };
+
+        void load();
+      },
+    },
     'live-status': {
       mount(ctx) {
         const ui = ctx.ui;

@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import type { ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
-import { configGroup, commentLimits, lyricLimits, listeningLimits, type MusicConfig } from './config.ts';
+import { configGroups, commentLimits, lyricLimits, listeningLimits, type MusicConfig } from './config.ts';
 import { WindowsReader, type Reader } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
@@ -113,19 +113,43 @@ export class MusicWorld implements World {
     return this.error || (!this.state.current ? '等待音乐播放器（未打开或无曲目）' :
       Date.now() - this.state.observedAt > 10_000 ? '信息过期，等待重连' : this.state.current.status === 'paused' ? '已暂停' : this.state.current.method);
   }
+  /** WebUI「设置」页用：把配置分组、字段声明与当前值一次交给浏览器，避免前端复制一份配置表。 */
+  private settingsPayload(): unknown {
+    const cfg = this.cfg as unknown as Record<string, unknown>;
+    const prefix = 'worlds.netease-music.';
+    return {
+      groups: configGroups.map(group => ({
+        id: group.id,
+        kind: group.id.slice(group.id.lastIndexOf(':') + 1),
+        title: group.schema.title,
+        description: group.schema.description ?? '',
+        fields: Object.entries(group.schema.properties).map(([path, prop]) => {
+          const key = path.slice(prefix.length);
+          return {
+            path, key, title: prop.title, description: prop.description ?? '', type: prop.type,
+            minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
+            value: cfg[key] ?? null,
+          };
+        }),
+      })),
+    };
+  }
   webUi(): WorldWebUiDecl {
     return {
-      config: [configGroup],
+      config: configGroups,
       // 顶部徽章不随运行状态刷新，已移除；状态统一由「实时状态」面板每 2 秒读取。
       panels: [
         { id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' },
         { id: 'listening-ranking', title: '一起听排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
+        { id: 'settings', title: '设置', description: '按用途折叠的陪听、背景资料、歌词、排名与读取设置' },
       ],
       ...(this.preferences || this.listening ? { storage: [
         ...(this.preferences ? [this.preferences.storage()] : []),
         ...(this.listening ? [this.listening.storage()] : []),
       ] } : {}),
       invoke: async (panel, method) => {
+        if (panel === 'settings' && method === 'read') return this.settingsPayload();
+        if (panel === 'settings') throw new Error('未知的设置请求');
         if (panel === 'listening-ranking' && method === 'snapshot') {
           if (!this.listening) return { status: 'unavailable', totalPlays: 0, storedTracks: 0, storedArtists: 0, limits: { tracks: 0, artists: 0, rankTracks: 0, rankArtists: 0 }, tracks: [], artists: [] };
           return { status: 'ok', ...(await this.listening.ranking()) };
