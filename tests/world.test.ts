@@ -11,7 +11,7 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(web.panels?.[0]?.id, 'live-status');
   assert.equal(web.panels?.[1]?.id, 'listening-ranking');
   assert.equal(web.panels?.[2]?.id, 'settings');
-  assert.equal(web.config?.length, configGroups.length);
+  assert.equal(web.config, undefined);
   const snap = await web.invoke?.('live-status', 'snapshot', []) as any;
   assert.equal(snap.reading, '等待音乐播放器（未打开或无曲目）');
   assert.equal(snap.track, '无');
@@ -40,6 +40,25 @@ test('webUi 提供实时状态面板与快照', async () => {
   await assert.rejects(web.invoke!('settings', 'other', []), /未知的设置请求/);
 });
 
+test('设置面板直接持久化配置并校验范围', async () => {
+  const cfg = defaults();
+  const world = new MusicWorld(cfg, patch => Object.assign(cfg, patch));
+  const web = world.webUi();
+  assert.equal(web.config, undefined);
+  await web.invoke!('settings', 'save', [{
+    cooldownSeconds: 45, lyricsLines: 20.9, windowFallback: false,
+    sessionPattern: 'cloudmusic|QQMusic', unknown: 1,
+  }]);
+  assert.equal(cfg.cooldownSeconds, 45);
+  assert.equal(cfg.lyricsLines, 20);
+  assert.equal(cfg.windowFallback, false);
+  assert.equal(cfg.sessionPattern, 'cloudmusic|QQMusic');
+  assert.equal((cfg as any).unknown, undefined);
+  await assert.rejects(web.invoke!('settings', 'save', [{ cooldownSeconds: 5 }]), /不能小于/);
+  await assert.rejects(web.invoke!('settings', 'save', [{ sessionPattern: '(' }]), /正则表达式无效/);
+  await assert.rejects(web.invoke!('settings', 'save', [null]), /设置参数无效/);
+});
+
 test('解析媒体快照时保留播放位置与曲目时长', () => {
   const snap = parseSnapshot({ track: {
     title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic',
@@ -49,7 +68,7 @@ test('解析媒体快照时保留播放位置与曲目时长', () => {
   assert.equal(snap.track?.durationSeconds, 269);
 });
 
-test('配置页明确支持网易云与 QQ 音乐，功能标签不带平台名', () => {
+test('配置分组明确支持网易云与 QQ 音乐，功能标签不带平台名', () => {
   assert.equal(new Set(configGroups.map(group => group.id)).size, configGroups.length);
   assert.ok(configGroups.length >= 5);
   for (const group of configGroups) {

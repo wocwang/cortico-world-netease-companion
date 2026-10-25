@@ -112,12 +112,12 @@ export default {
               try { new RegExp(value); }
               catch { invalid(text.invalidRegex); return; }
             }
-            values[reader.path] = value;
+            values[reader.key] = value;
           }
           try {
             status.classList.remove('bad');
             status.textContent = text.saving;
-            await ctx.setConfig(group.id, values);
+            await ctx.invoke('save', [values]);
             if (ctx.signal.aborted) return;
             status.textContent = text.saved;
             group.sheet.note.textContent = summary(group);
@@ -196,7 +196,7 @@ export default {
               sheet.body.appendChild(row);
               if (built.read) {
                 group.readers.push({
-                  key: field.key, path: field.path, title: field.title, type: field.type,
+                  key: field.key, title: field.title, type: field.type,
                   minimum: field.minimum, maximum: field.maximum, read: built.read,
                 });
               }

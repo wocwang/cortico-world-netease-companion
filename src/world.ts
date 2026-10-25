@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import type { ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
-import { configGroups, commentLimits, lyricLimits, listeningLimits, type MusicConfig } from './config.ts';
+import { configGroups, commentLimits, lyricLimits, listeningLimits, normalizeConfigPatch, type MusicConfig } from './config.ts';
 import { WindowsReader, type Reader } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
@@ -126,7 +126,7 @@ export class MusicWorld implements World {
         fields: Object.entries(group.schema.properties).map(([path, prop]) => {
           const key = path.slice(prefix.length);
           return {
-            path, key, title: prop.title, description: prop.description ?? '', type: prop.type,
+            key, title: prop.title, description: prop.description ?? '', type: prop.type,
             minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
             value: cfg[key] ?? null,
           };
@@ -136,7 +136,7 @@ export class MusicWorld implements World {
   }
   webUi(): WorldWebUiDecl {
     return {
-      config: configGroups,
+      // 配置入口统一到「设置」面板；不再声明宿主配置组，避免同一套字段出现两份表单。
       // 顶部徽章不随运行状态刷新，已移除；状态统一由「实时状态」面板每 2 秒读取。
       panels: [
         { id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' },
@@ -147,8 +147,15 @@ export class MusicWorld implements World {
         ...(this.preferences ? [this.preferences.storage()] : []),
         ...(this.listening ? [this.listening.storage()] : []),
       ] } : {}),
-      invoke: async (panel, method) => {
+      invoke: async (panel, method, args) => {
         if (panel === 'settings' && method === 'read') return this.settingsPayload();
+        if (panel === 'settings' && method === 'save') {
+          const patch = args[0];
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('设置参数无效');
+          const normalized = normalizeConfigPatch(patch as Record<string, unknown>);
+          if (Object.keys(normalized).length) this.persist(normalized);
+          return { result: 'saved' };
+        }
         if (panel === 'settings') throw new Error('未知的设置请求');
         if (panel === 'listening-ranking' && method === 'snapshot') {
           if (!this.listening) return { status: 'unavailable', totalPlays: 0, storedTracks: 0, storedArtists: 0, limits: { tracks: 0, artists: 0, rankTracks: 0, rankArtists: 0 }, tracks: [], artists: [] };

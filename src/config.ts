@@ -1,4 +1,4 @@
-import type { ConfigGroup } from 'cortico/core/types.ts';
+import type { ConfigGroup, ConfigProperty } from 'cortico/core/types.ts';
 
 export interface MusicConfig {
   enabled: boolean;
@@ -109,3 +109,36 @@ export const configGroups: ConfigGroup[] = [
     },
   },
 ];
+
+const CONFIG_PREFIX = 'worlds.netease-music.';
+const SETTINGS_FIELDS = new Map<string, ConfigProperty>();
+for (const group of configGroups)
+  for (const [path, prop] of Object.entries(group.schema.properties))
+    SETTINGS_FIELDS.set(path.slice(CONFIG_PREFIX.length), prop);
+
+/** 设置页不再经过宿主配置页；保存前按同一份分组声明校验类型、范围与正则。 */
+export function normalizeConfigPatch(values: Record<string, unknown>): Partial<MusicConfig> {
+  const patch: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(values)) {
+    const prop = SETTINGS_FIELDS.get(key);
+    if (!prop) continue;
+    if (prop.type === 'boolean') { patch[key] = raw === true; continue; }
+    if (prop.type === 'string') {
+      const text = String(raw ?? '');
+      if (key === 'sessionPattern' || key === 'windowFallbackProcess') {
+        try { new RegExp(text); } catch { throw new Error('正则表达式无效'); }
+      }
+      patch[key] = text;
+      continue;
+    }
+    if (prop.type === 'integer' || prop.type === 'number') {
+      let value = Number(raw);
+      if (!Number.isFinite(value)) throw new Error(`「${prop.title}」不是有效数字`);
+      if (prop.type === 'integer') value = Math.floor(value);
+      if (prop.minimum != null && value < prop.minimum) throw new Error(`「${prop.title}」不能小于 ${prop.minimum}`);
+      if (prop.maximum != null && value > prop.maximum) throw new Error(`「${prop.title}」不能大于 ${prop.maximum}`);
+      patch[key] = value;
+    }
+  }
+  return patch as Partial<MusicConfig>;
+}
