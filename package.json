@@ -1,8 +1,8 @@
 {
   "name": "better-cortico-world-netease-companion",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
-  "description": "听搭子 World：本机曲目信息、切歌事件与节制的桌宠评论",
+  "description": "读取网易云与 QQ 音乐曲目，切歌后让桌宠参考评论区、歌曲百科、歌手资料与官方歌词主动陪听，并记录听歌记忆和听歌排名。",
   "license": "MIT",
   "repository": {
     "type": "git",
