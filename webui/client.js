@@ -210,6 +210,118 @@ export default {
         void load();
       },
     },
+    'connection-check': {
+      mount(ctx) {
+        const ui = ctx.ui;
+        const zh = String(ctx.language ?? 'zh').startsWith('zh');
+        const text = {
+          recheck: zh ? '重新检测' : 'Recheck',
+          checking: zh ? '正在检测…' : 'Checking…',
+          installed: zh ? '已安装' : 'Installed',
+          missing: zh ? '未安装' : 'Not installed',
+          running: zh ? '运行中' : 'Running',
+          stopped: zh ? '未运行' : 'Not running',
+          connected: zh ? 'SMTC 已连接' : 'SMTC connected',
+          disconnected: zh ? '未检测到 SMTC' : 'No SMTC session',
+          sessions: zh ? '当前 SMTC 会话' : 'SMTC sessions',
+          sessionsDesc: zh ? 'Windows 当前暴露的媒体会话，未匹配到音乐软件时也会列在这里' : 'Media sessions Windows currently exposes, including apps outside the music filter',
+          empty: zh ? '当前没有可用的 SMTC 会话' : 'No SMTC session available',
+          checked: time => zh ? `检测于 ${time}，仅读取本机进程、安装信息与 SMTC 会话。` : `Checked ${time}; local processes, installs and SMTC sessions only.`,
+          failed: msg => zh ? `检测失败：${msg}` : `Check failed: ${msg}`,
+          notInstalled: zh ? '未检测到安装。安装后在音乐软件中开启 SMTC，播放一首歌再重新检测。' : 'Not installed. Install it, enable SMTC in the music app, play a track and recheck.',
+          notRunning: zh ? '已安装但当前未运行。打开音乐软件并播放一首歌后重新检测。' : 'Installed but not running. Open the music app, play a track and recheck.',
+          connectedHint: zh ? '已检测到 SMTC 会话。如果「实时状态」仍显示无曲目，请检查「设置」里的媒体会话应用名匹配。' : 'An SMTC session is visible. If Live status still shows no track, check the media session app pattern in Settings.',
+          qqHint: zh ? '在 QQ 音乐「设置 → 常规设置 → 通知」勾选「显示系统媒体传输控件（SMTC）」，然后重启 QQ 音乐再检测。' : 'In QQ Music, open Settings → General → Notifications and enable "Show system media transport controls (SMTC)", then restart QQ Music and recheck.',
+          neteaseHint: zh ? '网易云音乐较新版本默认开启 SMTC。若未检测到，请更新到最新版，并在设置中查找「系统媒体控制 / SMTC」相关选项，重启客户端后再检测。' : 'Recent NetEase Cloud Music versions enable SMTC by default. If no session appears, update the client, look for a system media / SMTC option in its settings, then restart and recheck.',
+        };
+
+        const bar = ui.rowbar();
+        const status = ui.msgline('');
+        const summary = ui.h('div');
+        const appsHost = ui.h('div');
+        const sessions = ui.table({
+          head: zh ? ['应用', '状态', '曲目', '歌手'] : ['App', 'State', 'Track', 'Artist'],
+          maxHeight: '28vh',
+        });
+        const sessionSection = ui.section(text.sessions, text.sessionsDesc);
+        sessionSection.append(sessions.el);
+        bar.append(ui.h('span', 'grow'), ui.button(text.recheck, { size: 'sm', onClick: () => void load() }));
+        ctx.root.append(bar, summary, appsHost, sessionSection, status);
+
+        let state = { apps: [], sessions: [], error: '' };
+
+        const appName = app => app.id === 'netease' ? (zh ? '网易云音乐' : 'NetEase Cloud Music') : (zh ? 'QQ 音乐' : 'QQ Music');
+        const hasSession = app => {
+          const pattern = app.id === 'netease' ? /cloudmusic|netease/i : /qqmusic/i;
+          return (state.sessions || []).some(session => pattern.test(String(session.app || '')));
+        };
+        const stateLabel = value => {
+          const name = String(value || '').toLowerCase();
+          if (name === 'playing') return zh ? '播放中' : 'Playing';
+          if (name === 'paused') return zh ? '已暂停' : 'Paused';
+          if (name === 'stopped') return zh ? '已停止' : 'Stopped';
+          return value || '-';
+        };
+        const hint = app => {
+          if (!app.installed) return text.notInstalled;
+          if (!app.running) return text.notRunning;
+          if (hasSession(app)) return text.connectedHint;
+          return app.id === 'qqmusic' ? text.qqHint : text.neteaseHint;
+        };
+
+        const draw = data => {
+          state = {
+            apps: Array.isArray(data?.apps) ? data.apps : [],
+            sessions: Array.isArray(data?.sessions) ? data.sessions : [],
+            error: data?.error ? String(data.error) : '',
+          };
+          summary.replaceChildren(ui.statgrid([
+            { k: text.installed, v: state.apps.filter(app => app.installed).length, unit: zh ? '个' : '', accent: true },
+            { k: text.running, v: state.apps.filter(app => app.running).length, unit: zh ? '个' : '' },
+            { k: text.sessions, v: state.sessions.length, unit: zh ? '个' : '' },
+          ]));
+          appsHost.replaceChildren();
+          for (const app of state.apps) {
+            const linked = hasSession(app);
+            const sheet = ui.sheet({ title: appName(app), desc: app.version ? `${zh ? '版本' : 'Version'} ${app.version}` : undefined });
+            const pills = ui.rowbar();
+            pills.append(
+              ui.pill(app.installed ? text.installed : text.missing, app.installed ? 'on' : 'plain'),
+              ui.pill(app.running ? text.running : text.stopped, app.running ? 'on' : 'plain'),
+              ui.pill(linked ? text.connected : text.disconnected, linked ? 'on' : 'off'),
+            );
+            sheet.body.appendChild(pills);
+            if (app.path) sheet.body.appendChild(ui.h('div', 'tdesc', String(app.path)));
+            sheet.body.appendChild(ui.h('div', 'tdesc', hint(app)));
+            appsHost.appendChild(sheet.el);
+          }
+          sessions.clear(state.sessions.length ? '' : text.empty);
+          for (const session of state.sessions) {
+            sessions.addRow([session.app || '-', stateLabel(session.status), session.title || '-', session.artist || '-']);
+          }
+          if (state.error) {
+            status.classList.add('bad');
+            status.textContent = text.failed(state.error);
+          } else {
+            status.classList.remove('bad');
+            status.textContent = text.checked(new Date().toLocaleTimeString());
+          }
+        };
+
+        const load = async () => {
+          status.classList.remove('bad');
+          status.textContent = text.checking;
+          try {
+            draw(await ctx.invoke('status'));
+          } catch (e) {
+            status.classList.add('bad');
+            status.textContent = text.failed(e instanceof Error ? e.message : String(e));
+          }
+        };
+
+        void load();
+      },
+    },
     'live-status': {
       mount(ctx) {
         const ui = ctx.ui;

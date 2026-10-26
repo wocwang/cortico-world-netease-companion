@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
 import { configGroups, commentLimits, lyricLimits, listeningLimits, normalizeConfigPatch, type MusicConfig } from './config.ts';
@@ -24,6 +26,8 @@ export const toolDecls: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
     reason: { type: 'string', description: '用户原话或简短依据，最多 120 字' },
   }, additionalProperties: false } },
 ];
+
+const execFileAsync = promisify(execFile);
 
 function cadenceHint(level: InteractionLevel | null): string {
   switch (level) {
@@ -134,12 +138,25 @@ export class MusicWorld implements World {
       })),
     };
   }
+  /** 「连接检查」只读本机进程、卸载表与 SMTC 会话，不修改任何第三方配置。 */
+  private async connectionStatus(): Promise<unknown> {
+    try {
+      const { stdout } = await execFileAsync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('../scripts/smtc-status.ps1', import.meta.url))],
+      { windowsHide: true, timeout: 15_000, maxBuffer: 512 * 1024, encoding: 'utf8' });
+      const text = stdout.trim();
+      return text ? JSON.parse(text) : { apps: [], sessions: [], error: '没有返回检测结果' };
+    } catch (error) {
+      return { apps: [], sessions: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   webUi(): WorldWebUiDecl {
     return {
       // 配置入口统一到「设置」面板；不再声明宿主配置组，避免同一套字段出现两份表单。
       // 顶部徽章不随运行状态刷新，已移除；状态统一由「实时状态」面板每 2 秒读取。
       panels: [
         { id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' },
+        { id: 'connection-check', title: '连接检查', description: '检测音乐软件安装、运行状态与 SMTC 会话，并给出开启指引' },
         { id: 'listening-ranking', title: '听歌排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
         { id: 'settings', title: '设置', description: '按用途折叠的陪听、背景资料、歌词、排名与读取设置' },
       ],
@@ -148,6 +165,8 @@ export class MusicWorld implements World {
         ...(this.listening ? [this.listening.storage()] : []),
       ] } : {}),
       invoke: async (panel, method, args) => {
+        if (panel === 'connection-check' && method === 'status') return this.connectionStatus();
+        if (panel === 'connection-check') throw new Error('未知的连接检查请求');
         if (panel === 'settings' && method === 'read') return this.settingsPayload();
         if (panel === 'settings' && method === 'save') {
           const patch = args[0];

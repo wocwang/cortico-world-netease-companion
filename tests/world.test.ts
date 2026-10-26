@@ -9,8 +9,9 @@ test('webUi 提供实时状态面板与快照', async () => {
   const web = world.webUi();
   assert.equal(web.badges, undefined);
   assert.equal(web.panels?.[0]?.id, 'live-status');
-  assert.equal(web.panels?.[1]?.id, 'listening-ranking');
-  assert.equal(web.panels?.[2]?.id, 'settings');
+  assert.equal(web.panels?.[1]?.id, 'connection-check');
+  assert.equal(web.panels?.[2]?.id, 'listening-ranking');
+  assert.equal(web.panels?.[3]?.id, 'settings');
   assert.equal(web.config, undefined);
   const snap = await web.invoke?.('live-status', 'snapshot', []) as any;
   assert.equal(snap.reading, '等待音乐播放器（未打开或无曲目）');
@@ -37,6 +38,7 @@ test('webUi 提供实时状态面板与快照', async () => {
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
   await assert.rejects(web.invoke!('live-status', 'other', []), /未知的状态请求/);
+  await assert.rejects(web.invoke!('connection-check', 'other', []), /未知的连接检查请求/);
   await assert.rejects(web.invoke!('settings', 'other', []), /未知的设置请求/);
 });
 
