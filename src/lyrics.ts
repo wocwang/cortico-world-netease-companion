@@ -94,21 +94,27 @@ export function currentIndex(lines: LyricsLine[], positionSeconds?: number): num
   return index;
 }
 
-/** 裁剪成事件摘要：前 maxLines 行 + 当前行，避免每首歌把整首歌词塞进上下文。 */
+/**
+ * 裁剪成事件摘要：默认前 maxLines 行 + 当前行。
+ * `windowed=true` 时改为当前播放位置附近的 maxLines 行，适合分段事件，
+ * 避免 80% 的分段还拿到开头的歌词。
+ */
 export function briefLyrics(result: LyricsReference | { status: 'disabled' } | null | undefined,
-  maxLines: number, positionSeconds?: number): LyricsBrief {
+  maxLines: number, positionSeconds?: number, windowed = false): LyricsBrief {
   if (!result || result.status === 'disabled') return { status: 'disabled' };
   if (result.status !== 'ok') return { status: result.status, reason: result.reason };
   const all = result.lines ?? [];
+  const limit = Math.max(1, Math.min(200, Math.floor(maxLines)));
+  const index = currentIndex(all, positionSeconds);
+  const start = windowed && index >= 0 ? Math.max(0, index - Math.floor(limit / 3)) : 0;
   const brief: LyricsBrief = {
     status: 'ok',
     match: result.match,
     source: result.source,
     hasTranslation: !!result.hasTranslation,
     total: result.total,
-    lines: all.slice(0, Math.max(1, Math.min(200, Math.floor(maxLines)))),
+    lines: all.slice(start, start + limit),
   };
-  const index = currentIndex(all, positionSeconds);
   if (index >= 0) brief.currentLine = all[index];
   return brief;
 }

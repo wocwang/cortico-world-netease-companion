@@ -1,0 +1,3 @@
+# Keep the environment prompt stable across Windows checkouts so describe.json
+# and checkDescribe() see the same bytes.
+src/ENV_PROMPT.md text eol=lf

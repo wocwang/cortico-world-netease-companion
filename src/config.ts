@@ -13,6 +13,10 @@ export interface MusicConfig {
   commentExcerpts: number;
   announceTracks: boolean;
   segmentComments: boolean;
+  segmentCount: number;
+  segmentEverySeconds: number;
+  actionHints: boolean;
+  allowPlaybackControl: boolean;
   artistContext: boolean;
   songContext: boolean;
   lyricsContext: boolean;
@@ -27,7 +31,8 @@ export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
   sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic', windowFallback: true,
   windowFallbackProcess: 'cloudmusic|QQMusic|qqmusic', commentReference: true, maxCommentChars: 80,
-  commentExcerpts: 10, announceTracks: true, segmentComments: false, artistContext: true, songContext: true,
+  commentExcerpts: 10, announceTracks: true, segmentComments: false, segmentCount: 2, segmentEverySeconds: 60,
+  actionHints: true, allowPlaybackControl: false, artistContext: true, songContext: true,
   lyricsContext: true, lyricsTranslation: true, lyricsLines: 12,
   listeningTrackLimit: 100, listeningArtistLimit: 30,
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
@@ -53,17 +58,26 @@ export function lyricLimits(cfg: MusicConfig): { lines: number } {
   const value = cfg.lyricsLines;
   return { lines: Number.isFinite(value) ? Math.floor(Math.max(3, Math.min(80, value))) : 12 };
 }
+export function segmentLimits(cfg: MusicConfig): { count: number; everySeconds: number } {
+  const bounded = (value: number, fallback: number, min: number, max: number) =>
+    Number.isFinite(value) ? Math.floor(Math.max(min, Math.min(max, value))) : fallback;
+  return { count: bounded(cfg.segmentCount, 2, 1, 4), everySeconds: bounded(cfg.segmentEverySeconds, 60, 0, 300) };
+}
 const owner = 'world:netease-music' as const;
 
 /** 配置按用途拆成多个组，标准配置页会分成短分区；WebUI 的「设置」页再把它们做成可折叠卡片。 */
 export const configGroups: ConfigGroup[] = [
   {
     id: 'world:netease-music:commentary', owner, schema: {
-      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐与 QQ 音乐；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，QQ 音乐独家内容可能无法匹配。',
+      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐与 QQ 音乐；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，QQ 音乐独家内容可能无法匹配；搜歌会同时查询网易云与 QQ 音乐。',
       properties: {
         'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
         'worlds.netease-music.announceTracks': { type: 'boolean', title: '切歌报幕', description: '新歌稳定后先用半句自然报出歌名/歌手，再说感受；信息缺失或不确定时不硬报。', 'x-hot': true },
-        'worlds.netease-music.segmentComments': { type: 'boolean', title: '同曲分段陪听', description: '同一首歌在 50% / 80% 处各追加一次短评；需要 SMTC 播放位置和时长，仍受评论间隔与安静开关约束。默认关闭。', 'x-hot': true },
+        'worlds.netease-music.segmentComments': { type: 'boolean', title: '同曲分段陪听', description: '同一首歌按设置的次数追加短评；有 SMTC 位置时按播放比例，没有位置时按间隔估算，仍受评论间隔与安静开关约束。默认关闭。', 'x-hot': true },
+        'worlds.netease-music.segmentCount': { type: 'integer', title: '每首分段次数', description: '1–4，默认 2。每首最多追加几次分段短评；次数越多越容易变成刷屏。', minimum: 1, maximum: 4, 'x-hot': true },
+        'worlds.netease-music.segmentEverySeconds': { type: 'integer', title: '无播放位置时的分段间隔（秒）', description: '0–300，默认 60。播放器不提供播放位置或时长时，按已播放时间每 N 秒检查一次分段；0 = 只按位置分段。', minimum: 0, maximum: 300, 'x-hot': true },
+        'worlds.netease-music.actionHints': { type: 'boolean', title: '动作/表情提示', description: '按歌曲情绪提示桌宠使用形象已有的动作/表情；只使用当前形象支持的词，不会新增动作。', 'x-hot': true },
+        'worlds.netease-music.allowPlaybackControl': { type: 'boolean', title: '允许替用户暂停/切歌', description: '开启后，桌宠只在用户明确要求时暂停、继续、上一首或下一首；不会主动控制播放。默认关闭。', 'x-hot': true },
         'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },
         'worlds.netease-music.cooldownSeconds': { type: 'integer', title: '主动评论最短间隔（秒）', description: '30–3600 秒。间隔越大评论越少；陪听画像会按用户明确要求的互动频率自动缩放实际间隔。仅在曲目稳定且满足间隔时触发，不是定时重复评论。', minimum: 30, maximum: 3600, 'x-hot': true },
         'worlds.netease-music.maxCommentChars': { type: 'integer', title: '评论最大字数', description: '10–500，默认 80。包含标点、数字与外语字符；只约束音乐主动评论，由桌宠模型遵循，不截断其他聊天。', minimum: 10, maximum: 500, 'x-hot': true },

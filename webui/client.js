@@ -48,8 +48,8 @@ export default {
           switch (group.kind) {
             case 'commentary':
               return zh
-                ? `评论 ${onOff(get('commentary'))} · 报幕 ${onOff(get('announceTracks'))} · 分段 ${onOff(get('segmentComments'))} · 稳定 ${get('settleSeconds') ?? '—'} 秒 · 间隔 ${get('cooldownSeconds') ?? '—'} 秒 · ${get('maxCommentChars') ?? '—'} 字 · ${get('commentExcerpts') ?? '—'} 条`
-                : `Comments ${onOff(get('commentary'))} · announce ${onOff(get('announceTracks'))} · segments ${onOff(get('segmentComments'))} · settle ${get('settleSeconds') ?? '—'}s · gap ${get('cooldownSeconds') ?? '—'}s · ${get('maxCommentChars') ?? '—'} chars · ${get('commentExcerpts') ?? '—'} excerpts`;
+                ? `评论 ${onOff(get('commentary'))} · 报幕 ${onOff(get('announceTracks'))} · 分段 ${onOff(get('segmentComments'))}（${get('segmentCount') ?? '—'} 次 / ${get('segmentEverySeconds') ?? '—'} 秒）· 动作 ${onOff(get('actionHints'))} · 控制 ${onOff(get('allowPlaybackControl'))} · 稳定 ${get('settleSeconds') ?? '—'} 秒 · 间隔 ${get('cooldownSeconds') ?? '—'} 秒 · ${get('maxCommentChars') ?? '—'} 字 · ${get('commentExcerpts') ?? '—'} 条`
+                : `Comments ${onOff(get('commentary'))} · announce ${onOff(get('announceTracks'))} · segments ${onOff(get('segmentComments'))} (${get('segmentCount') ?? '—'} / ${get('segmentEverySeconds') ?? '—'}s) · actions ${onOff(get('actionHints'))} · control ${onOff(get('allowPlaybackControl'))} · settle ${get('settleSeconds') ?? '—'}s · gap ${get('cooldownSeconds') ?? '—'}s · ${get('maxCommentChars') ?? '—'} chars · ${get('commentExcerpts') ?? '—'} excerpts`;
             case 'context':
               return zh
                 ? `评论区 ${onOff(get('commentReference'))} · 歌手 ${onOff(get('artistContext'))} · 歌曲 ${onOff(get('songContext'))}`

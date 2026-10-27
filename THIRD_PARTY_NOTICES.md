@@ -27,3 +27,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## coopani-world-music（交互思路参考，未复制代码）
+
+- 包：https://www.npmjs.com/package/coopani-world-music
+- 作者：Mr.Q
+- 许可：MIT（仅见发布包 `package.json` 的 `license` 字段；该 tarball 未附带 LICENSE 文件）
+- 用途：动作词表探测、按播放比例分段、播放控制与搜歌的交互思路参考。
+- 说明：本项目的 `scripts/control.ps1` 针对 Windows SMTC 平台接口重写；未直接复制该包的源代码。若未来复用其代码，需要先取得其完整 MIT 版权声明与许可文本。

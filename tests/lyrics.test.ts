@@ -98,6 +98,16 @@ test('briefLyrics：只给前 N 行，并附当前行', () => {
   assert.equal(brief.currentLine?.text, '第12行');
 });
 
+test('briefLyrics：windowed 给出当前播放位置附近的歌词', () => {
+  const raw = Array.from({ length: 20 }, (_, i) => `[00:${String(i + 1).padStart(2, '0')}.00]第${i + 1}行`).join('\n');
+  const reference = { status: 'ok' as const, total: 20, hasTranslation: false, match: 'metadata' as const, lines: parseLrc(raw) };
+  const brief = briefLyrics(reference, 6, 17.5, true);
+  assert.equal(brief.lines?.[0]?.text, '第15行');
+  assert.ok(brief.lines?.some(line => line.text === '第17行'));
+  assert.equal(brief.currentLine?.text, '第17行');
+  assert.equal(briefLyrics(reference, 6, 1, true).lines?.[0]?.text, '第1行');
+});
+
 test('briefLyrics：行数钳制在 1–200，disabled 与非 ok 状态原样透传', () => {
   const lines = parseLrc(Array.from({ length: 260 }, (_, i) => `[0${Math.floor(i / 60) + 1}:${String(i % 60).padStart(2, '0')}.00]行${i}`).join('\n'));
   const reference = { status: 'ok' as const, lines };

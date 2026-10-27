@@ -194,6 +194,18 @@ test('同曲分段只在 50% / 80% 触发，并跳过已播位置', () => {
   assert.deepEqual((world as any).segmentPoints(media({ durationSeconds: 60 })), []);
 });
 
+test('同曲分段支持 3 段和无播放位置时的时间间隔', () => {
+  const world = new MusicWorld({ ...defaults(), segmentComments: true, segmentCount: 3 }, () => {});
+  assert.deepEqual((world as any).segmentPoints(media({ durationSeconds: 200 })), [80, 130, 170]);
+
+  const fallback = new MusicWorld({ ...defaults(), segmentComments: true, segmentEverySeconds: 60 }, () => {});
+  const titled = media({ method: 'window-title', durationSeconds: 200 });
+  assert.deepEqual((fallback as any).segmentPoints(titled), [60, 120]);
+  (fallback as any).segmentElapsedMs = 130000;
+  (fallback as any).seedSegments(titled);
+  assert.deepEqual([...(fallback as any).segmentFired], [0, 1]);
+});
+
 test('World 在曲目稳定 10 秒后写入听歌记忆，并通过工具暴露关联', async () => {
   const dir = await temp();
   const realNow = Date.now;
