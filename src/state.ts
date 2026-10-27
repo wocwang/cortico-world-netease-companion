@@ -81,6 +81,15 @@ export class ListeningState {
       now >= this.observedAt && now - this.observedAt <= 10_000 &&
       now - this.candidateSince >= seconds(cfg.settleSeconds, 8, 2, 120) * 1000;
   }
+  /** 当前这首是否已经有过开场评论；同曲分段只在这之后触发。 */
+  hasOffered(track: Track): boolean {
+    return this.offeredKey === key(track);
+  }
+  /** 与 offer 相同的时间/间隔检查，但不看“本首已评论过”，供同曲分段使用。 */
+  canOffer(cfg: MusicConfig, now: number): boolean {
+    return this.ready(cfg, now) &&
+      now - this.lastOffer >= seconds(cfg.cooldownSeconds, 120, 30, 3600) * 1000;
+  }
   commit(t: Track, revision: number, now: number): boolean {
     if (!this.current || this.revision !== revision || key(t) !== key(this.current)) return false;
     this.offeredKey = key(t);

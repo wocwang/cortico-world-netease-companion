@@ -28,6 +28,8 @@
 
 新增 `commentReference` 默认 true；老部署缺少此字段时也按启用处理，可在配置页关闭；`commentExcerpts` 缺省按 10 条处理。网络请求不使用桌宠或网易云的账号凭据。验证时直连网易云取得歌曲匹配与默认 10 条评论摘录，不读取评论者资料。
 
+1.11.0 借鉴 MIT 许可的 `Sakayume02/cortico-world-music`，在元数据架构内增加四项交互：LRCLIB 同步歌词兜底（`NeteaseComments.lrclibLyrics`，仅接受 syncedLyrics，结果标未核实版本）；同曲分段（`segmentPoints` 取 50%/80%，需要 SMTC 位置与时长，仍然受 `cooldownSeconds` 与安静开关约束）；切歌报幕（`announceTracks`，默认开，由内部 cue 要求先报歌名/歌手）；动作/表情提示（仅提示词，使用当前形象已有动作）。`ListeningState` 新增 `hasOffered` / `canOffer` 供同曲分段判断，事件附带 `phase` 与 `segment`。仍不采集音频、不需要额外 Key；归属见 `THIRD_PARTY_NOTICES.md`。
+
 1.10.0 市场简介与安装说明补充 SMTC 前提，并新增「连接检查」面板。`scripts/smtc-status.ps1` 通过 WinRT 读取全部 SMTC 会话，并查询卸载表与进程名判断网易云/QQ 音乐是否安装、运行；World 的 `connectionStatus()` 用一次 PowerShell 调用返回 `apps`、`sessions` 与错误信息，面板按软件展示状态、开启路径和「重新检测」。该面板只读本机信息，不写入第三方配置，也不上传检测结果。
 
 1.9.1 市场简介改为功能优先：先说明读取网易云与 QQ 音乐曲目、桌宠参考评论区/歌曲百科/歌手资料/官方歌词陪听，再说明听歌记忆与听歌排名；功能与 1.9.0 相同。

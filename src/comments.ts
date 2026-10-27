@@ -1,11 +1,21 @@
 import type { Track } from './state.ts';
-import { collectBackground, fetchBaiduSong, type BackgroundNote } from './sources.ts';
+import { collectBackground, fetchBaiduSong, USER_AGENT, type BackgroundNote } from './sources.ts';
 import { fetchSongWiki, type SongWiki } from './wiki.ts';
-import { mergeTranslation, parseLrc, type LyricsReference } from './lyrics.ts';
+import { mergeTranslation, parseLrc, type LyricsLine, type LyricsReference } from './lyrics.ts';
 
 export type { LyricsReference } from './lyrics.ts';
 
 export interface Song { id: number; title: string; artists: string[]; album: string; aliases?: string[]; popularity?: number; durationMs?: number }
+interface LrclibRecord {
+  trackName?: string;
+  artistName?: string;
+  instrumental?: boolean;
+  plainLyrics?: string | null;
+  syncedLyrics?: string | null;
+}
+/** 用于跨来源比较歌名/歌手：忽略大小写、空白、标点与符号。 */
+const lrclibKey = (value: unknown): string =>
+  String(value ?? '').toLowerCase().normalize('NFKC').replace(/[\s\p{P}\p{S}]/gu, '');
 export interface SongBackground {
   status: 'ok' | 'unavailable';
   reason?: string;
@@ -513,7 +523,7 @@ export class NeteaseComments implements CommentProvider {
   private durations = new Map<string, { until: number; ms: number | null }>();
   private lyricCache = new Map<string, { until: number; result: LyricsReference }>();
   private blockedUntil = 0;
-  constructor(private request: typeof fetch = fetch) {}
+  constructor(private request: typeof fetch = fetch, private lyricRequest: typeof fetch = fetch) {}
   private async json(path: string, signal?: AbortSignal): Promise<any> {
     const r = await this.request('https://music.163.com' + path, {
       headers: { Referer: 'https://music.163.com/', Accept: 'application/json' },
@@ -762,38 +772,103 @@ export class NeteaseComments implements CommentProvider {
     return ms;
   }
   /**
-   * 取当前曲目的官方 LRC 歌词：复用 find() 的搜索匹配，翻译行按时间戳合并。
-   * 成功结果按曲目缓存 60 分钟，同一首重听不重复请求；纯音乐或未提供歌词返回 empty。
+   * 网易云没有歌词或匹配不到时，按歌名/歌手查 LRCLIB 的同步歌词。
+   * 只接受带时间戳的 syncedLyrics；结果为标题/歌手匹配，版本仍需标为未核实。
+   * 这段查询逻辑参考了 MIT 许可的 Sakayume02/cortico-world-music，并按其许可保留归属。
+   */
+  private async lrclibLyrics(track: Track, signal: AbortSignal | undefined, maxLines: number): Promise<LyricsReference | null> {
+    const params = new URLSearchParams({ track_name: track.title });
+    if (track.artist) params.set('artist_name', track.artist);
+    const url = 'https://lrclib.net/api/search?' + params.toString();
+    const request = () => this.lyricRequest(url, {
+      headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
+    });
+    let response: Response;
+    try {
+      response = await request();
+      if (response.status === 429 || response.status === 503) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        response = await request();
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return null;
+    }
+    if (!response.ok) return null;
+    let records: unknown;
+    try { records = await response.json(); } catch { return null; }
+    if (!Array.isArray(records)) return null;
+    const titleKey = lrclibKey(track.title);
+    const artistKey = lrclibKey(track.artist);
+    let best: { lines: LyricsLine[]; score: number } | null = null;
+    for (const raw of records) {
+      const record = raw as LrclibRecord;
+      if (!record || record.instrumental) continue;
+      const synced = typeof record.syncedLyrics === 'string' ? record.syncedLyrics : '';
+      if (!synced) continue;
+      const lines = parseLrc(synced);
+      if (!lines.length) continue;
+      const recordTitle = lrclibKey(record.trackName);
+      const recordArtist = lrclibKey(record.artistName);
+      let score = 0;
+      if (recordTitle === titleKey) score += 4;
+      else if (recordTitle.includes(titleKey) || titleKey.includes(recordTitle)) score += 2;
+      if (artistKey && recordArtist === artistKey) score += 3;
+      else if (artistKey && (recordArtist.includes(artistKey) || artistKey.includes(recordArtist))) score += 1;
+      if (!best || score > best.score) best = { lines, score };
+    }
+    if (!best || best.score <= 0) return null;
+    return {
+      status: 'ok', match: 'title-artist-version-unverified', source: 'lrclib', url: 'https://lrclib.net',
+      hasTranslation: false, total: best.lines.length,
+      lines: best.lines.slice(0, Math.max(1, Math.min(200, Math.floor(maxLines)))),
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+  /**
+   * 取当前曲目的 LRC 歌词：优先网易云官方 LRC，没有时用 LRCLIB 同步歌词兜底。
+   * 成功结果按曲目缓存 60 分钟，同一首重听不重复请求；两个来源都没有时返回 empty。
    */
   async lyrics(track: Track, signal?: AbortSignal, maxLines = 80): Promise<LyricsReference> {
     const key = trackKey(track), cached = this.lyricCache.get(key);
     signal?.throwIfAborted();
     if (cached && cached.until > Date.now()) return cached.result;
-    if (Date.now() < this.blockedUntil) return { status: 'unavailable', reason: '在线接口正在冷却，暂时不读歌词' };
     let result: LyricsReference = { status: 'unavailable', reason: '歌词读取失败' };
     try {
-      const found = await this.find(track, signal);
-      const best = found[0];
-      if (!best) {
-        result = { status: 'empty', reason: '没有找到歌名、歌手或专辑信息相符的歌曲' };
-      } else {
-        const query = new URLSearchParams({ id: String(best.song.id), lv: '-1', tv: '-1', rv: '-1' });
-        const raw = await this.json('/api/song/lyric?' + query, signal);
-        const lines = parseLrc(typeof raw?.lrc?.lyric === 'string' ? raw.lrc.lyric : '');
-        if (!lines.length) {
-          result = { status: 'empty', reason: '这首歌没有可用的歌词（纯音乐或未提供）', song: best.song, match: best.match };
+      if (Date.now() >= this.blockedUntil) {
+        const found = await this.find(track, signal);
+        const best = found[0];
+        if (!best) {
+          result = { status: 'empty', reason: '没有找到歌名、歌手或专辑信息相符的歌曲' };
         } else {
-          const translated = typeof raw?.tlyric?.lyric === 'string' ? raw.tlyric.lyric : '';
-          const merged = translated ? mergeTranslation(lines, translated) : lines;
-          result = { status: 'ok', song: best.song, match: best.match, source: 'official-lrc',
-            url: `https://music.163.com/song?id=${best.song.id}`, hasTranslation: merged.some(line => line.tr),
-            total: merged.length, lines: merged.slice(0, Math.max(1, Math.min(200, Math.floor(maxLines)))),
-            fetchedAt: new Date().toISOString() };
+          const query = new URLSearchParams({ id: String(best.song.id), lv: '-1', tv: '-1', rv: '-1' });
+          const raw = await this.json('/api/song/lyric?' + query, signal);
+          const lines = parseLrc(typeof raw?.lrc?.lyric === 'string' ? raw.lrc.lyric : '');
+          if (!lines.length) {
+            result = { status: 'empty', reason: '这首歌没有可用的歌词（纯音乐或未提供）', song: best.song, match: best.match };
+          } else {
+            const translated = typeof raw?.tlyric?.lyric === 'string' ? raw.tlyric.lyric : '';
+            const merged = translated ? mergeTranslation(lines, translated) : lines;
+            result = { status: 'ok', song: best.song, match: best.match, source: 'official-lrc',
+              url: `https://music.163.com/song?id=${best.song.id}`, hasTranslation: merged.some(line => line.tr),
+              total: merged.length, lines: merged.slice(0, Math.max(1, Math.min(200, Math.floor(maxLines)))),
+              fetchedAt: new Date().toISOString() };
+          }
         }
+      } else {
+        result = { status: 'unavailable', reason: '在线接口正在冷却，暂时不读歌词' };
       }
     } catch (e) {
       if (signal?.aborted) throw e;
       result = { status: 'unavailable', reason: e instanceof Error ? e.message : '歌词读取失败' };
+    }
+    if (result.status !== 'ok') {
+      const fallback = await this.lrclibLyrics(track, signal, maxLines);
+      if (fallback) {
+        if (result.song) fallback.song = result.song;
+        result = fallback;
+      }
     }
     this.lyricCache.delete(key);
     this.lyricCache.set(key, { until: Date.now() + (result.status === 'ok' ? 60 * 60_000 : 5 * 60_000), result });

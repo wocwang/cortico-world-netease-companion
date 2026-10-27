@@ -183,6 +183,17 @@ test('听歌记忆可持久化并单独清除', async () => {
   }
 });
 
+test('同曲分段只在 50% / 80% 触发，并跳过已播位置', () => {
+  const world = new MusicWorld({ ...defaults(), segmentComments: true }, () => {});
+  const track = media({ durationSeconds: 200 });
+  assert.deepEqual((world as any).segmentPoints(track), [100, 160]);
+  (world as any).seedSegments({ ...track, positionSeconds: 120 });
+  assert.deepEqual([...(world as any).segmentFired], [0]);
+  (world as any).seedSegments({ ...track, positionSeconds: 0 });
+  assert.deepEqual([...(world as any).segmentFired], []);
+  assert.deepEqual((world as any).segmentPoints(media({ durationSeconds: 60 })), []);
+});
+
 test('World 在曲目稳定 10 秒后写入听歌记忆，并通过工具暴露关联', async () => {
   const dir = await temp();
   const realNow = Date.now;

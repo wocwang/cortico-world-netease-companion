@@ -31,6 +31,8 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(settings.groups.length, configGroups.length);
   assert.equal(settings.groups[0].kind, 'commentary');
   assert.equal(settings.groups[0].fields.find((f: any) => f.key === 'cooldownSeconds').value, 120);
+  assert.equal(settings.groups[0].fields.find((f: any) => f.key === 'announceTracks').value, true);
+  assert.equal(settings.groups[0].fields.find((f: any) => f.key === 'segmentComments').value, false);
   assert.equal(
     settings.groups.reduce((sum: number, group: any) => sum + group.fields.length, 0),
     configGroups.reduce((sum, group) => sum + Object.keys(group.schema.properties).length, 0),
@@ -49,11 +51,14 @@ test('设置面板直接持久化配置并校验范围', async () => {
   assert.equal(web.config, undefined);
   await web.invoke!('settings', 'save', [{
     cooldownSeconds: 45, lyricsLines: 20.9, windowFallback: false,
+    announceTracks: false, segmentComments: true,
     sessionPattern: 'cloudmusic|QQMusic', unknown: 1,
   }]);
   assert.equal(cfg.cooldownSeconds, 45);
   assert.equal(cfg.lyricsLines, 20);
   assert.equal(cfg.windowFallback, false);
+  assert.equal(cfg.announceTracks, false);
+  assert.equal(cfg.segmentComments, true);
   assert.equal(cfg.sessionPattern, 'cloudmusic|QQMusic');
   assert.equal((cfg as any).unknown, undefined);
   await assert.rejects(web.invoke!('settings', 'save', [{ cooldownSeconds: 5 }]), /不能小于/);

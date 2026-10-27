@@ -1,8 +1,8 @@
 {
   "name": "better-cortico-world-netease-companion",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "type": "module",
-  "description": "读取网易云与 QQ 音乐曲目，需在音乐软件中开启 SMTC（系统媒体传输控件）；切歌后让桌宠参考评论区、歌曲百科、歌手资料与官方歌词主动陪听，并记录听歌记忆和听歌排名。",
+  "description": "读取网易云与 QQ 音乐曲目，需在音乐软件中开启 SMTC（系统媒体传输控件）；切歌后让桌宠参考评论区、歌曲百科、歌手资料与歌词主动陪听，并记录听歌记忆和听歌排名。",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -48,6 +48,7 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "describe.json",
     "docs"
   ],
