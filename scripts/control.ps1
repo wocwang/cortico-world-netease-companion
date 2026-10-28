@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'players.ps1')
 
 try {
   [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -63,7 +64,7 @@ try {
   # 2) If the current player is unknown, follow the configured priority and prefer a playing session.
   if ($null -eq $selected -and $Priority) {
     try {
-      $players = @($Priority | ConvertFrom-Json)
+      $players = @(Read-PlayerList $Priority)
     } catch {
       Write-Result ([ordered]@{ ok = $false; error = 'Invalid priority JSON'; player = '' })
       exit 0

@@ -70,6 +70,26 @@ test('读取器用候选协议按优先级选择并上报诊断', async () => {
   assert.equal(reader.diagnostics().running, false);
 });
 
+test('读取器把无法识别的播放器标识记入诊断', async () => {
+  const child = new FakeChild();
+  const snapshots: any[] = [];
+  const reader = new WindowsReader(defaults(), (() => child) as any,
+    { heartbeatMs: 999999, checkMs: 999999, retryMs: 999999 });
+  reader.start(snapshot => snapshots.push(snapshot), () => {});
+  await new Promise<void>(resolve => {
+    child.stdout.write(JSON.stringify({
+      sessions: [{ app: 'cloudmusic.exe', player: 'netease qq', status: 'playing', title: '晴天',
+        artist: '周杰伦', album: '', timeline: false }],
+      windowCandidates: [],
+    }) + '\n', () => resolve());
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(snapshots.at(-1)?.track, null);
+  assert.equal(reader.diagnostics().selection, null);
+  assert.deepEqual(reader.diagnostics().invalidPlayers, ['netease qq']);
+  await reader.stop();
+});
+
 test('preflight 归一化播放器优先级并补齐官方项', () => {
   const patches: any[] = [];
   definition.preflight!({

@@ -3,11 +3,12 @@
 # Priority and stickiness are decided in TypeScript (src/selection.ts).
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+. (Join-Path $PSScriptRoot 'players.ps1')
 
 $players = @()
 $playersJson = $env:MUSIC_PLAYER_ORDER
 if ($playersJson) {
-    try { $players = @($playersJson | ConvertFrom-Json) } catch { throw 'Invalid MUSIC_PLAYER_ORDER JSON' }
+    try { $players = @(Read-PlayerList $playersJson) } catch { throw 'Invalid MUSIC_PLAYER_ORDER JSON' }
 }
 $players = @($players | Where-Object { $_.id -and $_.session })
 if ($players.Count -eq 0) {

@@ -419,6 +419,9 @@ export default {
           emptySessions: zh ? '没有官方播放器的 SMTC 会话' : 'No official-player SMTC session',
           emptyWindows: zh ? '没有窗口标题候选' : 'No window-title candidate',
           currentEmpty: zh ? '尚未读取到当前曲目' : 'No current track yet',
+          invalid: ids => zh
+            ? `检测到无法识别的播放器标识：${ids}。通常是读取脚本与播放器清单不同步，可重启读取器或重新安装插件。`
+            : `Unrecognized player ids: ${ids}. The reader script may be out of sync; restart the reader or reinstall the plugin.`,
         };
         const reasonLabel = reason => {
           const labels = {
@@ -433,6 +436,7 @@ export default {
 
         const bar = ui.rowbar();
         const status = ui.msgline('');
+        const warning = ui.msgline('');
         const summary = ui.h('div');
         const currentHost = ui.h('div');
         const priorityRow = ui.rowbar();
@@ -452,7 +456,7 @@ export default {
         const refresh = ui.button(text.refresh, { size: 'sm', onClick: () => void load() });
         const restart = ui.button(text.restart, { size: 'sm', onClick: () => void restartReader() });
         bar.append(ui.h('span', 'grow'), refresh, restart);
-        ctx.root.append(bar, summary, currentHost, sessionSection, windowSection, selectionHost, status);
+        ctx.root.append(bar, summary, currentHost, sessionSection, windowSection, selectionHost, warning, status);
 
         const playerName = (priority, id) => {
           const player = (priority || []).find(item => item.id === id);
@@ -512,6 +516,14 @@ export default {
             { k: text.sticky, v: selector.sticky ? `${playerName(priority, selector.sticky.player)} · ${selector.sticky.app}（${selector.sticky.method}）` : text.none },
             { k: text.pending, v: selector.pending ? `${playerName(priority, selector.pending.player)} · ${selector.pending.app}（${selector.pending.count}）` : text.none },
           ]));
+          const invalid = Array.isArray(reader?.invalidPlayers) ? reader.invalidPlayers : [];
+          if (invalid.length) {
+            warning.classList.add('bad');
+            warning.textContent = text.invalid(invalid.join('、'));
+          } else {
+            warning.classList.remove('bad');
+            warning.textContent = '';
+          }
           if (data?.error) {
             status.classList.add('bad');
             status.textContent = text.failed(data.error);

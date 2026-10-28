@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { playerEnv, type MusicConfig } from './config.ts';
+import { playerEnv, playerOrder, type MusicConfig } from './config.ts';
 import { TrackSelector, type Selection, type SelectorState } from './selection.ts';
 import { parseCandidates, parseSnapshot, type MediaCandidates, type SessionCandidate, type Snapshot, type WindowCandidate } from './state.ts';
 
@@ -12,6 +12,7 @@ export interface ReaderDiagnostics {
   windows: WindowCandidate[];
   selection: Selection | null;
   selector: SelectorState;
+  invalidPlayers: string[];
   error: string;
 }
 export interface Reader {
@@ -31,6 +32,7 @@ export class WindowsReader implements Reader {
   private updatedAt = 0;
   private latest: MediaCandidates = { sessions: [], windows: [] };
   private latestSelection: Selection | null = null;
+  private latestInvalid: string[] = [];
   private latestError = '';
   constructor(private cfg: MusicConfig, private launchProcess: typeof spawn = spawn,
     private timing = { heartbeatMs: 20_000, checkMs: 5000, retryMs: 2000 }) {}
@@ -70,11 +72,16 @@ export class WindowsReader implements Reader {
             const candidates = parseCandidates(raw);
             this.latest = candidates;
             this.latestError = candidates.error ?? '';
+            const allowed = new Set(playerOrder(this.cfg.playerPriority));
+            this.latestInvalid = [...new Set(
+              [...candidates.sessions, ...candidates.windows].map(item => item.player).filter(id => !allowed.has(id)),
+            )];
             this.latestSelection = this.selector.select(this.cfg.playerPriority, candidates.sessions, candidates.windows);
             onSnapshot({ track: this.latestSelection?.track ?? null, error: candidates.error });
           } else {
             this.latest = { sessions: [], windows: [] };
             this.latestSelection = null;
+            this.latestInvalid = [];
             this.latestError = '';
             onSnapshot(parseSnapshot(raw));
           }
@@ -91,6 +98,7 @@ export class WindowsReader implements Reader {
         this.running = false;
         this.latest = { sessions: [], windows: [] };
         this.latestSelection = null;
+        this.latestInvalid = [];
         clearInterval(this.watchdog);
         this.watchdog = undefined;
         this.child = undefined;
@@ -111,6 +119,7 @@ export class WindowsReader implements Reader {
       windows: this.latest.windows,
       selection: this.latestSelection,
       selector: this.selector.state(),
+      invalidPlayers: this.latestInvalid,
       error: this.latestError,
     };
   }
@@ -119,6 +128,7 @@ export class WindowsReader implements Reader {
     this.running = false;
     this.latest = { sessions: [], windows: [] };
     this.latestSelection = null;
+    this.latestInvalid = [];
     ++this.generation;
     clearTimeout(this.restart);
     this.restart = undefined;

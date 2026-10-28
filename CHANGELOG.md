@@ -1,5 +1,12 @@
 # 更新记录
 
+## 1.15.1 - 2026-10-28
+
+- 修复 Windows PowerShell 5.1 下实时读取始终为空：`ConvertFrom-Json` 不会枚举顶层 JSON 数组，`@(...)` 会把播放器清单当成单个对象，拼出 `netease qq kugou kuwo spotify` 这样的非法标识，导致所有候选被丢弃。新增 `scripts/players.ps1` 统一展开数组，`media-session.ps1` 与 `control.ps1` 都改用它。
+- 「读取诊断」新增非法播放器标识提示：再有脚本字段不同步时，页面会直接列出无法识别的 id，而不是静默无曲目。
+- 新增 PowerShell 回归测试，确保播放器优先级清单在 PS 5.1 下能解析成多个播放器。
+- 版本升至 1.15.1。
+
 ## 1.15.0 - 2026-10-28
 
 - 播放器选择策略移到 TypeScript 的 `TrackSelector`：读取脚本只上报全部 SMTC 会话与窗口候选，选择、优先级、粘性和单测都在 TypeScript 侧完成。
