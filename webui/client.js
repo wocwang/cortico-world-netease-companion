@@ -578,6 +578,8 @@ export default {
             { k: zh ? '播放状态' : 'Playback', v: s.playback },
             { k: zh ? '来源' : 'Source', v: s.method || '-' },
             { k: zh ? '陪听' : 'Commentary', v: s.commentary },
+            { k: zh ? '分段陪听' : 'Segments', v: s.segments || '已关闭' },
+            { k: zh ? '动作提示' : 'Action hints', v: s.actions || '已关闭' },
             { k: zh ? '评论区' : 'Comments', v: s.comment },
             { k: zh ? '歌手资料' : 'Artist', v: s.artist },
             { k: zh ? '歌曲背景' : 'Song', v: s.song || '未启用' },
@@ -923,6 +925,7 @@ export default {
         };
         const draw = s => {
           const cumulative = s.scope === 'cumulative';
+          const mixed = s.scope === 'mixed';
           const topArtist = s.topArtists?.[0];
           const topGenre = s.topGenres?.[0];
           const topPlayer = s.players?.[0];
@@ -937,6 +940,10 @@ export default {
             statsHost.append(ui.h('div', 'tdesc', zh
               ? '逐日记录从本次更新后开始：总播放、常听歌手、循环曲与曲风来自之前的累计排名；时段、每日与播放器图表会随新播放逐步补齐。'
               : 'Per-day logging starts with this update: totals, top artists, repeat tracks and genres come from earlier cumulative ranking; hour, daily and player charts fill in as new plays are logged.'));
+          } else if (mixed) {
+            statsHost.append(ui.h('div', 'tdesc', zh
+              ? `其中 ${s.earlierPlays ?? 0} 次播放来自更新前的累计记录，没有逐日日期；总播放、常听歌手、循环曲与曲风已合并，时段、每日与播放器图表只统计更新后的记录。`
+              : `${s.earlierPlays ?? 0} plays come from pre-update cumulative records without per-day dates; totals, top artists, repeat tracks and genres are merged, while hour, daily and player charts only count records after the update.`));
           }
           const hours = s.hours || [];
           chart(hourChart, hours.map(item => ({

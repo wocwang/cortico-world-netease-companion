@@ -244,6 +244,84 @@ test('同曲分段支持 3 段和无播放位置时的时间间隔', () => {
   assert.deepEqual([...(fallback as any).segmentFired], [0, 1]);
 });
 
+test('无时间轴时按实际播放时间推进分段与段落估算', () => {
+  const realNow = Date.now;
+  let fake = realNow();
+  Date.now = () => fake;
+  try {
+    const cfg = { ...defaults(), segmentComments: true, commentReference: false, cooldownSeconds: 30, settleSeconds: 2 };
+    const world = new MusicWorld(cfg, () => {});
+    const track = media({ timeline: false, positionSeconds: 0, durationSeconds: 200 });
+    (world as any).observe({ track });
+    fake += 5000;
+    (world as any).observe({ track });
+    assert.equal((world as any).segmentElapsedMs, 5000);
+    assert.equal((world as any).segmentClock(track), 5);
+    fake += 5000;
+    (world as any).observe({ track });
+    const revision = (world as any).state.revision;
+    assert.ok((world as any).state.commit(track, revision, fake));
+    for (let i = 0; i < 18; ++i) {
+      fake += 5000;
+      (world as any).observe({ track });
+    }
+    assert.equal((world as any).segmentOpportunity(cfg, fake)?.index, 0);
+    assert.equal((world as any).sectionFor(track)?.label, '副歌');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('副歌分段事件带 section、动作建议与语音提示', async () => {
+  const realNow = Date.now;
+  let fake = realNow();
+  Date.now = () => fake;
+  try {
+    const cfg = { ...defaults(), segmentComments: true, segmentCount: 2, cooldownSeconds: 30, settleSeconds: 2 };
+    const comments = {
+      get: async () => ({ status: 'ok', excerpts: [], songBackground: { status: 'ok', wiki: { genres: ['摇滚'] } } }),
+      getArtist: async () => ({ status: 'unavailable' }),
+      lyrics: async () => ({ status: 'unavailable' }),
+    };
+    const world = new MusicWorld(cfg, () => {}, undefined, comments as any);
+    (world as any).actionVocabCache = { figure: 'whale', expressions: ['开心'], motions: ['点头', '跳舞'] };
+    const events: Array<Record<string, any>> = [];
+    (world as any).host = {
+      pushEvent: async (event: Record<string, any>) => { events.push(event); return { cursor: events.length }; },
+      withdrawPending: async () => true,
+    };
+    const track = media({ timeline: false, positionSeconds: 0, durationSeconds: 200 });
+    (world as any).observe({ track });
+    fake += 5000;
+    (world as any).observe({ track });
+    const revision = (world as any).state.revision;
+    assert.ok((world as any).state.commit(track, revision, fake));
+    for (let i = 0; i < 19; ++i) {
+      fake += 5000;
+      (world as any).observe({ track });
+    }
+    assert.ok((world as any).state.hasOffered(track));
+    assert.ok((world as any).state.canOffer(cfg, fake));
+    assert.equal((world as any).segmentClock(track), 100);
+    assert.deepEqual((world as any).segmentPoints(track), [100, 160]);
+    assert.deepEqual([...(world as any).segmentFired], []);
+    assert.equal((world as any).segmentKey, JSON.stringify([track.title, track.artist, track.album]));
+    assert.equal((world as any).segmentOpportunity(cfg, fake)?.index, 0);
+    await (world as any).tick(fake);
+    const external = events.find(event => event.type === 'netease-music.comment_opportunity')!;
+    const payload = JSON.parse(external.text);
+    assert.equal(payload.phase, 'segment');
+    assert.equal(payload.section?.id, 'chorus');
+    assert.equal(payload.segment?.positionSeconds, 100);
+    assert.ok(payload.style?.actions.includes('跳舞'));
+    const cue = events.find(event => event.type === 'netease-music.comment_requested')!;
+    assert.match(cue.text, /sovits_speak/);
+    assert.match(cue.text, /跳舞/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('World 在曲目稳定 10 秒后写入听歌记忆，并通过工具暴露关联', async () => {
   const dir = await temp();
   const realNow = Date.now;

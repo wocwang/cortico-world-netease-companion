@@ -29,10 +29,12 @@ function idOf(ratio: number): SongSectionId {
   return 'outro';
 }
 
-/** 当前播放位置对应的段落；位置/时长不可用时返回 null。 */
-export function sectionOf(track: Track | null | undefined): SongSection | null {
-  const position = track?.positionSeconds;
-  const duration = track?.durationSeconds;
+/** 当前播放位置对应的段落；位置/时长不可用时返回 null。无时间轴的播放器可传入估算位置与时长。 */
+export function sectionOf(track: Track | null | undefined,
+  positionSeconds: number | undefined = track?.positionSeconds,
+  durationSeconds: number | undefined = track?.durationSeconds): SongSection | null {
+  const position = positionSeconds;
+  const duration = durationSeconds;
   if (position === undefined || duration === undefined) return null;
   if (!Number.isFinite(position) || !Number.isFinite(duration) || position < 0 || duration < 30) return null;
   const ratio = Math.max(0, Math.min(1, position / duration));

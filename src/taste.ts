@@ -13,8 +13,8 @@ export interface TasteProfile {
   version: 1;
   updatedAt: string;
   windowDays: number;
-  /** days：按逐日记录统计；cumulative：还没有逐日记录，用 listening.json 的累计排名兜底。 */
-  scope: 'days' | 'cumulative';
+  /** days：按逐日记录统计；mixed：逐日记录 + 更新前只留下的累计排名；cumulative：还没有逐日记录，全部用累计排名兜底。 */
+  scope: 'days' | 'mixed' | 'cumulative';
   totalPlays: number;
   recordedDays: number;
   topArtists: Array<{ name: string; count: number }>;
@@ -39,16 +39,20 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   cumulative?: CumulativeListening): TasteProfile {
   const days = history.days;
   const useDays = days.length > 0;
+  const dayPlays = days.reduce((sum, day) => sum + day.plays, 0);
   const fallback = !useDays && cumulative && cumulative.totalPlays > 0 ? cumulative : null;
-  const scope: TasteProfile['scope'] = useDays ? 'days' : 'cumulative';
-  const totalPlays = useDays
-    ? days.reduce((sum, day) => sum + day.plays, 0)
-    : fallback?.totalPlays ?? 0;
+  /** 逐日记录出现之前只留下了累计排名；把它补进统计，避免升级后画像突然从零开始。 */
+  const earlierPlays = useDays && cumulative ? Math.max(0, cumulative.totalPlays - dayPlays) : 0;
+  const scope: TasteProfile['scope'] = useDays ? (earlierPlays > 0 ? 'mixed' : 'days') : 'cumulative';
+  const totalPlays = useDays ? dayPlays + earlierPlays : fallback?.totalPlays ?? 0;
   const artists = new Map<string, number>();
   const tracks = new Map<string, { title: string; artist: string; count: number }>();
   const genres = new Map<string, number>();
   const hours = Array(24).fill(0) as number[];
   const players = new Map<string, number>();
+  const dayTrackCounts = new Map<string, number>();
+  const dayArtistCounts = new Map<string, number>();
+  const normArtist = (name: string) => name.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
   const addTrack = (track: { title: string; artist: string; album: string; count: number }) => {
     const key = JSON.stringify([track.title, track.artist, track.album]);
     const found = tracks.get(key);
@@ -58,10 +62,27 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   };
   if (useDays) {
     for (const day of days) {
-      for (const artist of day.artists) artists.set(artist.name, (artists.get(artist.name) ?? 0) + artist.count);
-      for (const track of day.tracks) addTrack(track);
+      for (const artist of day.artists) {
+        artists.set(artist.name, (artists.get(artist.name) ?? 0) + artist.count);
+        dayArtistCounts.set(normArtist(artist.name), (dayArtistCounts.get(normArtist(artist.name)) ?? 0) + artist.count);
+      }
+      for (const track of day.tracks) {
+        const key = JSON.stringify([track.title, track.artist, track.album]);
+        dayTrackCounts.set(key, (dayTrackCounts.get(key) ?? 0) + track.count);
+        addTrack(track);
+      }
       for (let hour = 0; hour < 24; ++hour) hours[hour] += day.hours[hour] ?? 0;
       for (const player of day.players) players.set(player.app, (players.get(player.app) ?? 0) + player.count);
+    }
+    if (earlierPlays > 0 && cumulative) {
+      for (const track of cumulative.tracks) {
+        const extra = track.count - (dayTrackCounts.get(JSON.stringify([track.title, track.artist, track.album])) ?? 0);
+        if (extra > 0) addTrack({ ...track, count: extra });
+      }
+      for (const artist of cumulative.artists) {
+        const extra = artist.count - (dayArtistCounts.get(normArtist(artist.name)) ?? 0);
+        if (extra > 0) artists.set(artist.name, (artists.get(artist.name) ?? 0) + extra);
+      }
     }
   } else if (fallback) {
     for (const artist of fallback.artists) artists.set(artist.name, (artists.get(artist.name) ?? 0) + artist.count);
@@ -76,7 +97,8 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   const tags: string[] = [];
   if (totalPlays) {
     const night = [22, 23, 0, 1, 2, 3, 4, 5].reduce((sum, hour) => sum + hours[hour], 0);
-    if (useDays && night / totalPlays >= 0.5) tags.push('夜间听歌');
+    // 时段只来自逐日记录，比例也用逐日播放数作分母，避免被更新前的累计播放稀释。
+    if (useDays && night / Math.max(1, dayPlays) >= 0.5) tags.push('夜间听歌');
     if (repeatTracks.length) tags.push('循环型');
     const topArtistShare = topArtists.length ? topArtists[0].count / totalPlays : 0;
     if (topArtists.length >= 3 && topArtistShare < 0.35) tags.push('多元歌手');
@@ -91,7 +113,7 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   const summary = totalPlays
     ? scope === 'cumulative'
       ? `累计共 ${totalPlays} 次播放，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}；逐日记录从更新后开始。`
-      : `${windowLabel}共 ${totalPlays} 次播放，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}${playerList[0] ? `，常用 ${playerLabel(playerList[0].app)}` : ''}。`
+      : `${windowLabel}共 ${totalPlays} 次播放${scope === 'mixed' ? `（其中 ${earlierPlays} 次来自更新前的累计记录）` : ''}，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}${playerList[0] ? `，常用 ${playerLabel(playerList[0].app)}` : ''}。`
     : '';
   return {
     version: 1, updatedAt: new Date(now).toISOString(), windowDays, scope, totalPlays,

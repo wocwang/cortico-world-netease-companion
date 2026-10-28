@@ -7,6 +7,12 @@ import { MusicWorld } from '../src/world.ts';
 import { configGroups, defaults, matchPlayer, PLAYERS, playerOrder } from '../src/config.ts';
 import { parseCandidates, parseSnapshot } from '../src/state.ts';
 
+test('评论与状态提示要求语音 World 同步发声', () => {
+  const world = new MusicWorld(defaults(), () => {});
+  assert.match((world as any).voiceHint(), /sovits_speak/);
+  assert.match((world as any).stateCueText({ kind: 'paused', track: null }), /sovits_speak/);
+});
+
 test('webUi 提供实时状态面板与快照', async () => {
   const world = new MusicWorld(defaults(), () => {});
   const web = world.webUi();
@@ -216,6 +222,61 @@ test('老版本只有累计排名时，个人画像用累计数据兜底而不�
     assert.equal(taste.status, 'ok');
     assert.equal(taste.scope, 'cumulative');
     assert.equal(taste.totalPlays, 7);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('已有逐日记录时仍保留更新前的累计排名', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'netease-world-mixed-'));
+  try {
+    const at = '2026-10-28T10:00:00.000Z';
+    await writeFile(join(dir, 'listening.json'), JSON.stringify({
+      version: 2, totalPlays: 9,
+      tracks: [
+        { title: '晴天', artist: '周杰伦', album: '叶惠美', count: 6, firstAt: at, lastAt: at },
+        { title: '起风了', artist: '买辣椒也用券', album: '起风了', count: 2, firstAt: at, lastAt: at },
+        { title: '童年', artist: '罗大佑', album: '', count: 1, firstAt: at, lastAt: at },
+      ],
+      artists: [
+        { name: '周杰伦', count: 6, lastAt: at },
+        { name: '买辣椒也用券', count: 2, lastAt: at },
+        { name: '罗大佑', count: 1, lastAt: at },
+      ],
+      days: [{
+        date: '2026-10-28', plays: 5,
+        tracks: [
+          { title: '晴天', artist: '周杰伦', album: '叶惠美', count: 4, lastAt: at },
+          { title: '起风了', artist: '买辣椒也用券', album: '起风了', count: 1, lastAt: at },
+        ],
+        artists: [
+          { name: '周杰伦', count: 4, lastAt: at },
+          { name: '买辣椒也用券', count: 1, lastAt: at },
+        ],
+        hours: Array(24).fill(0).map((_, hour) => hour === 10 ? 4 : hour === 11 ? 1 : 0),
+        players: [{ app: 'cloudmusic', count: 4 }, { app: 'QQMusic', count: 1 }],
+      }],
+    }), 'utf8');
+    const world = new MusicWorld(defaults(), () => {}, undefined, undefined, dir);
+    const web = world.webUi();
+    const profile = await web.invoke!('profile-analysis', 'snapshot', ['90']) as any;
+    assert.equal(profile.status, 'ok');
+    assert.equal(profile.scope, 'mixed');
+    assert.equal(profile.totalPlays, 9);
+    assert.equal(profile.earlierPlays, 4);
+    assert.equal(profile.recordedDays, 1);
+    assert.equal(profile.topArtists[0].name, '周杰伦');
+    assert.equal(profile.topArtists[0].count, 6);
+    assert.deepEqual(profile.repeatTracks.map((item: any) => item.title), ['晴天', '起风了']);
+    assert.equal(profile.hours.find((item: any) => item.hour === 10)?.count, 4);
+    assert.equal(profile.players[0].count, 4);
+    assert.match(profile.summary, /9 次播放/);
+    assert.match(profile.summary, /4 次来自更新前/);
+    const taste = JSON.parse(String(await (world.tools().find(tool => tool.name === 'music_taste')!.handler as any)(
+      { days: 7 }, {})));
+    assert.equal(taste.status, 'ok');
+    assert.equal(taste.scope, 'mixed');
+    assert.equal(taste.totalPlays, 9);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

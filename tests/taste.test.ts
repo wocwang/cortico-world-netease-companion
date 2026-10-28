@@ -65,6 +65,33 @@ test('没有逐日记录时用累计排名兜底常听歌手、循环曲与曲�
   assert.match(taste.summary, /累计共 7 次播放/);
 });
 
+test('逐日记录与更新前累计排名合并展示，不丢掉旧数据', () => {
+  const taste = buildTaste(history, 30, 0, new Map(), {
+    totalPlays: 9,
+    tracks: [
+      { title: '晴天', artist: '周杰伦', album: '叶惠美', count: 6 },
+      { title: '起风了', artist: '买辣椒也用券', album: '起风了', count: 2 },
+      { title: '童年', artist: '罗大佑', album: '', count: 1 },
+    ],
+    artists: [
+      { name: '周杰伦', count: 6 },
+      { name: '买辣椒也用券', count: 2 },
+      { name: '罗大佑', count: 1 },
+    ],
+  });
+  assert.equal(taste.scope, 'mixed');
+  assert.equal(taste.totalPlays, 9);
+  assert.equal(taste.recordedDays, 1);
+  assert.equal(taste.topArtists[0].name, '周杰伦');
+  assert.equal(taste.topArtists[0].count, 6);
+  assert.deepEqual(taste.repeatTracks.map(item => item.title), ['晴天', '起风了']);
+  // 时段与播放器只来自逐日记录，不会凭空补出旧数据。
+  assert.equal(taste.hours.find(item => item.hour === 10)?.count, 4);
+  assert.equal(taste.players[0].count, 4);
+  assert.match(taste.summary, /9 次播放/);
+  assert.match(taste.summary, /4 次来自更新前/);
+});
+
 test('口味档案单独持久化并清除', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'netease-taste-'));
   try {

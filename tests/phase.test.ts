@@ -30,3 +30,9 @@ test('位置或时长缺失时不给段落', () => {
   assert.equal(sectionOf({ ...track(10, 200), durationSeconds: undefined }), null);
   assert.equal(sectionOf(track(10, 20)), null);
 });
+
+test('无时间轴时可用估算位置与已知时长取段落', () => {
+  const noTimeline: Track = { ...track(0, 200), timeline: false, positionSeconds: 0, durationSeconds: undefined };
+  assert.equal(sectionOf(noTimeline), null);
+  assert.equal(sectionOf(noTimeline, 120, 200)?.label, '副歌');
+});
