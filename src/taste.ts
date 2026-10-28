@@ -53,12 +53,16 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   const dayTrackCounts = new Map<string, number>();
   const dayArtistCounts = new Map<string, number>();
   const normArtist = (name: string) => name.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  /** 曲风占比只用有曲风标签的播放做分母；更新前没有曲风信息的播放不参与。 */
+  let genrePlays = 0;
   const addTrack = (track: { title: string; artist: string; album: string; count: number }) => {
     const key = JSON.stringify([track.title, track.artist, track.album]);
     const found = tracks.get(key);
     if (found) found.count += track.count;
     else tracks.set(key, { title: track.title, artist: track.artist, count: track.count });
-    for (const genre of genreMap.get(key) ?? []) genres.set(genre, (genres.get(genre) ?? 0) + track.count);
+    const trackGenres = genreMap.get(key) ?? [];
+    if (trackGenres.length) genrePlays += track.count;
+    for (const genre of trackGenres) genres.set(genre, (genres.get(genre) ?? 0) + track.count);
   };
   if (useDays) {
     for (const day of days) {
@@ -72,7 +76,12 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
         addTrack(track);
       }
       for (let hour = 0; hour < 24; ++hour) hours[hour] += day.hours[hour] ?? 0;
-      for (const player of day.players) players.set(player.app, (players.get(player.app) ?? 0) + player.count);
+      for (const player of day.players) {
+        const app = (player.app ?? '').trim();
+        // 旧记录或读取失败时的 unknown 不代表真实客户端，不参与占比。
+        if (!app || app === 'unknown') continue;
+        players.set(app, (players.get(app) ?? 0) + player.count);
+      }
     }
     if (earlierPlays > 0 && cumulative) {
       for (const track of cumulative.tracks) {
@@ -90,10 +99,11 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   }
   const topArtists = [...artists.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, count]) => ({ name, count }));
   const topGenres = [...genres.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
-    .map(([name, count]) => ({ name, count, share: totalPlays ? count / totalPlays : 0 }));
+    .map(([name, count]) => ({ name, count, share: genrePlays ? count / genrePlays : 0 }));
   const repeatTracks = [...tracks.values()].filter(track => track.count >= 2).sort((a, b) => b.count - a.count).slice(0, 8);
+  const playerPlays = [...players.values()].reduce((sum, count) => sum + count, 0);
   const playerList = [...players.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6)
-    .map(([app, count]) => ({ app, count, share: totalPlays ? count / totalPlays : 0 }));
+    .map(([app, count]) => ({ app, count, share: playerPlays ? count / playerPlays : 0 }));
   const tags: string[] = [];
   if (totalPlays) {
     const night = [22, 23, 0, 1, 2, 3, 4, 5].reduce((sum, hour) => sum + hours[hour], 0);
@@ -113,7 +123,7 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
   const summary = totalPlays
     ? scope === 'cumulative'
       ? `累计共 ${totalPlays} 次播放，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}；逐日记录从更新后开始。`
-      : `${windowLabel}共 ${totalPlays} 次播放${scope === 'mixed' ? `（其中 ${earlierPlays} 次来自更新前的累计记录）` : ''}，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}${playerList[0] ? `，常用 ${playerLabel(playerList[0].app)}` : ''}。`
+      : `${windowLabel}共 ${totalPlays} 次播放${scope === 'mixed' ? `（其中 ${earlierPlays} 次来自更新前的累计记录）` : ''}，${topArtists[0] ? `最常听 ${topArtists[0].name}` : '还没有常听歌手'}${playerList[0] ? `，常用 ${playerLabel(playerList[0].app)}` : ''}${scope === 'mixed' ? '；播放器与曲风占比只统计有记录的部分' : ''}。`
     : '';
   return {
     version: 1, updatedAt: new Date(now).toISOString(), windowDays, scope, totalPlays,

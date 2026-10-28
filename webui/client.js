@@ -746,7 +746,7 @@ export default {
 
         const hourSheet = ui.foldSheet('profile-hours', { title: zh ? '时段分布' : 'Listening hours', desc: zh ? '按 24 小时汇总播放次数，不做人格判断' : 'Plays by hour of day', defaultOpen: true });
         hourSheet.body.append(hourChart);
-        const daySheet = ui.foldSheet('profile-days', { title: zh ? '每日播放' : 'Daily plays', desc: zh ? '最近有记录的日期与播放次数；没有播放的日期不显示' : 'Recent recorded days and play counts; silent days are omitted', defaultOpen: true });
+        const daySheet = ui.foldSheet('profile-days', { title: zh ? '每日播放' : 'Daily plays', desc: zh ? '按日历显示每天的播放次数，颜色越深播放越多；没有播放的日期为空格' : 'Calendar of daily play counts; darker means more plays, empty days stay blank', defaultOpen: true });
         daySheet.body.append(dayChart);
         const artistSheet = ui.foldSheet('profile-artists', { title: zh ? '常听歌手' : 'Top artists', desc: zh ? '所选窗口内的播放次数' : 'Within the selected window', defaultOpen: true });
         artistSheet.body.append(artistTable.el);
@@ -805,44 +805,44 @@ export default {
           }
         };
         const PALETTE = ['#5b8cff', '#ff8a5b', '#4cc38a', '#b07cff', '#f5c542', '#ff6b9a'];
-        const chart = (host, items, options) => {
+        const drawHourChart = (host, items) => {
           host.replaceChildren();
-          if (!items.length) {
-            host.append(ui.h('div', 'tdesc', options.empty));
-            return;
-          }
           const wrap = ui.h('div');
           wrap.style.display = 'flex';
           wrap.style.alignItems = 'flex-end';
           wrap.style.gap = '3px';
+          wrap.style.height = '160px';
           wrap.style.padding = '8px 2px 0';
-          wrap.style.minHeight = '160px';
           const max = Math.max(1, ...items.map(item => item.count));
           for (const item of items) {
             const col = ui.h('div');
             col.style.flex = '1';
             col.style.minWidth = '4px';
+            col.style.height = '100%';
             col.style.display = 'flex';
             col.style.flexDirection = 'column';
+            col.style.justifyContent = 'flex-end';
             col.style.alignItems = 'center';
-            col.title = `${options.title(item)} · ${item.count}`;
+            col.title = `${String(item.hour).padStart(2, '0')}:00 · ${item.count}`;
             const area = ui.h('div');
             area.style.width = '100%';
-            area.style.height = '128px';
+            area.style.flex = '1';
             area.style.display = 'flex';
             area.style.alignItems = 'flex-end';
+            area.style.borderBottom = '1px solid rgba(128,128,128,.28)';
             const fill = ui.h('div');
             fill.style.width = '100%';
             fill.style.height = '0';
-            fill.style.background = options.color;
+            fill.style.background = 'var(--accent, #5b8cff)';
             fill.style.borderRadius = '3px 3px 0 0';
             fill.style.transition = 'height .7s cubic-bezier(.2,.8,.2,1)';
             area.append(fill);
             const lab = ui.h('div');
-            lab.textContent = options.label(item);
+            lab.textContent = item.hour % 3 === 0 ? String(item.hour) : '';
+            lab.style.height = '14px';
+            lab.style.lineHeight = '14px';
             lab.style.fontSize = '9px';
             lab.style.opacity = '.55';
-            lab.style.marginTop = '4px';
             lab.style.whiteSpace = 'nowrap';
             col.append(area, lab);
             wrap.append(col);
@@ -851,6 +851,132 @@ export default {
             });
           }
           host.append(wrap);
+        };
+        const dayKey = value => {
+          const d = new Date(value);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        const drawCalendar = (host, daily, days, zh) => {
+          host.replaceChildren();
+          const plays = new Map((daily || []).map(item => [item.date, item.plays || 0]));
+          if (!plays.size) {
+            host.append(ui.h('div', 'tdesc', zh ? '还没有逐日记录' : 'No daily data yet'));
+            return;
+          }
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const start = new Date(today);
+          start.setDate(start.getDate() - Math.max(1, days) + 1);
+          const gridStart = new Date(start);
+          gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+          const gridEnd = new Date(today);
+          gridEnd.setDate(gridEnd.getDate() + (6 - gridEnd.getDay()));
+          const weeks = Math.max(1, Math.round((gridEnd - gridStart) / 604_800_000) + 1);
+          const max = Math.max(1, ...plays.values());
+          const level = count => {
+            if (!count) return 0;
+            if (count <= max * 0.25) return 1;
+            if (count <= max * 0.5) return 2;
+            if (count <= max * 0.75) return 3;
+            return 4;
+          };
+          const opacity = [0.18, 0.38, 0.62, 0.82, 1];
+          const box = ui.h('div');
+          box.style.display = 'flex';
+          box.style.flexDirection = 'column';
+          box.style.gap = '4px';
+          box.style.overflowX = 'auto';
+          box.style.padding = '2px 0 4px';
+          const monthRow = ui.h('div');
+          monthRow.style.display = 'grid';
+          monthRow.style.gridTemplateColumns = `repeat(${weeks}, 12px)`;
+          monthRow.style.gap = '3px';
+          monthRow.style.height = '16px';
+          monthRow.style.marginLeft = '18px';
+          let lastMonth = -1;
+          for (let week = 0; week < weeks; ++week) {
+            const cell = ui.h('div');
+            const first = new Date(gridStart);
+            first.setDate(first.getDate() + week * 7);
+            if (first < start) first.setTime(start.getTime());
+            const month = first.getMonth();
+            if (month !== lastMonth) {
+              lastMonth = month;
+              cell.textContent = `${month + 1} ${zh ? '月' : 'mo'}`;
+              cell.style.fontSize = '9px';
+              cell.style.opacity = '.6';
+              cell.style.whiteSpace = 'nowrap';
+            }
+            monthRow.append(cell);
+          }
+          const body = ui.h('div');
+          body.style.display = 'flex';
+          body.style.gap = '4px';
+          const weekdays = ui.h('div');
+          weekdays.style.display = 'grid';
+          weekdays.style.gridTemplateRows = 'repeat(7, 12px)';
+          weekdays.style.gap = '3px';
+          weekdays.style.width = '14px';
+          for (let row = 0; row < 7; ++row) {
+            const label = ui.h('div');
+            label.textContent = row === 1 ? (zh ? '一' : 'M') : row === 3 ? (zh ? '三' : 'W') : row === 5 ? (zh ? '五' : 'F') : '';
+            label.style.fontSize = '9px';
+            label.style.lineHeight = '12px';
+            label.style.opacity = '.5';
+            label.style.textAlign = 'right';
+            weekdays.append(label);
+          }
+          const grid = ui.h('div');
+          grid.style.display = 'grid';
+          grid.style.gridAutoFlow = 'column';
+          grid.style.gridTemplateRows = 'repeat(7, 12px)';
+          grid.style.gridTemplateColumns = `repeat(${weeks}, 12px)`;
+          grid.style.gap = '3px';
+          const cells = weeks * 7;
+          for (let index = 0; index < cells; ++index) {
+            const cell = ui.h('div');
+            cell.style.width = '12px';
+            cell.style.height = '12px';
+            cell.style.borderRadius = '2px';
+            cell.style.background = 'rgba(128,128,128,.14)';
+            const date = new Date(gridStart);
+            date.setDate(date.getDate() + index);
+            if (date < start || date > today) {
+              cell.style.visibility = 'hidden';
+            } else {
+              const key = dayKey(date);
+              const count = plays.get(key) || 0;
+              if (count) {
+                cell.style.background = 'var(--accent, #5b8cff)';
+                cell.style.opacity = String(opacity[level(count)]);
+                cell.title = `${key} · ${count} ${zh ? '次' : 'plays'}`;
+              } else {
+                cell.title = `${key} · ${zh ? '没有播放' : 'no plays'}`;
+              }
+            }
+            grid.append(cell);
+          }
+          body.append(weekdays, grid);
+          const legend = ui.h('div');
+          legend.style.display = 'flex';
+          legend.style.alignItems = 'center';
+          legend.style.gap = '4px';
+          legend.style.justifyContent = 'flex-end';
+          legend.style.fontSize = '9px';
+          legend.style.opacity = '.6';
+          legend.append(ui.h('span', '', zh ? '少' : 'Less'));
+          for (let i = 0; i < 5; ++i) {
+            const dot = ui.h('div');
+            dot.style.width = '10px';
+            dot.style.height = '10px';
+            dot.style.borderRadius = '2px';
+            dot.style.background = i === 0 ? 'rgba(128,128,128,.14)' : 'var(--accent, #5b8cff)';
+            dot.style.opacity = i === 0 ? '1' : String(opacity[i]);
+            legend.append(dot);
+          }
+          legend.append(ui.h('span', '', zh ? '多' : 'More'));
+          box.append(monthRow, body, legend);
+          host.append(box);
         };
         const drawPie = players => {
           playerLegend.replaceChildren();
@@ -942,32 +1068,21 @@ export default {
               : 'Per-day logging starts with this update: totals, top artists, repeat tracks and genres come from earlier cumulative ranking; hour, daily and player charts fill in as new plays are logged.'));
           } else if (mixed) {
             statsHost.append(ui.h('div', 'tdesc', zh
-              ? `其中 ${s.earlierPlays ?? 0} 次播放来自更新前的累计记录，没有逐日日期；总播放、常听歌手、循环曲与曲风已合并，时段、每日与播放器图表只统计更新后的记录。`
-              : `${s.earlierPlays ?? 0} plays come from pre-update cumulative records without per-day dates; totals, top artists, repeat tracks and genres are merged, while hour, daily and player charts only count records after the update.`));
+              ? `其中 ${s.earlierPlays ?? 0} 次播放来自更新前的累计记录，没有逐日日期；总播放、常听歌手、循环曲与曲风已合并，时段、每日与播放器图表只统计更新后的记录；曲风占比只统计有曲风标签的播放。`
+              : `${s.earlierPlays ?? 0} plays come from pre-update cumulative records without per-day dates; totals, top artists, repeat tracks and genres are merged, while hour, daily and player charts only count records after the update; genre shares only count plays with genre tags.`));
           }
           const hours = s.hours || [];
-          chart(hourChart, hours.map(item => ({
-            ...item,
-            label: item.hour % 3 === 0 ? String(item.hour) : '',
-          })), {
-            label: item => item.label,
-            title: item => `${String(item.hour).padStart(2, '0')}:00`,
-            color: 'var(--accent, #5b8cff)',
-            empty: zh ? '还没有时段记录' : 'No hour data yet',
-          });
+          drawHourChart(hourChart, hours);
           const peak = hours.reduce((best, item) => item.count > best.count ? item : best, { hour: -1, count: 0 });
           hourSheet.note.textContent = peak.count
             ? `${zh ? '峰值' : 'Peak'} ${String(peak.hour).padStart(2, '0')}:00 · ${peak.count} ${zh ? '次' : 'plays'}`
             : (zh ? '还没有时段记录' : 'No hour data yet');
-          const days = (s.daily || []).slice(-14).map(item => ({ ...item, count: item.plays }));
-          chart(dayChart, days, {
-            label: item => item.date.slice(5),
-            title: item => item.date,
-            color: '#4cc38a',
-            empty: zh ? '还没有逐日记录' : 'No daily data yet',
-          });
-          daySheet.note.textContent = days.length
-            ? `${days.length} ${zh ? '个有记录的日期' : 'recorded days'}`
+          const calendarDays = Math.max(1, Number(s.calendarDays) || (s.all ? 365 : 90));
+          const daily = s.daily || [];
+          drawCalendar(dayChart, daily, calendarDays, zh);
+          const dailyPlays = daily.reduce((sum, item) => sum + (item.plays || 0), 0);
+          daySheet.note.textContent = daily.length
+            ? `${calendarDays} ${zh ? '天' : 'days'} · ${daily.length} ${zh ? '天有记录' : 'recorded'} · ${dailyPlays} ${zh ? '次' : 'plays'}`
             : (zh ? '还没有逐日记录' : 'No daily data yet');
           const artists = s.topArtists || [];
           bars(artistTable, artists, (item, plays) => [ui.chip(String(artists.indexOf(item) + 1), 'plain'), item.name, plays],

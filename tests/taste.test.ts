@@ -66,7 +66,8 @@ test('没有逐日记录时用累计排名兜底常听歌手、循环曲与曲�
 });
 
 test('逐日记录与更新前累计排名合并展示，不丢掉旧数据', () => {
-  const taste = buildTaste(history, 30, 0, new Map(), {
+  const genreMap = new Map([[JSON.stringify(['晴天', '周杰伦', '叶惠美']), ['流行']]]);
+  const taste = buildTaste(history, 30, 0, genreMap, {
     totalPlays: 9,
     tracks: [
       { title: '晴天', artist: '周杰伦', album: '叶惠美', count: 6 },
@@ -88,8 +89,27 @@ test('逐日记录与更新前累计排名合并展示，不丢掉旧数据', ()
   // 时段与播放器只来自逐日记录，不会凭空补出旧数据。
   assert.equal(taste.hours.find(item => item.hour === 10)?.count, 4);
   assert.equal(taste.players[0].count, 4);
+  // 占比只用有记录的部分做分母：播放器 4/5，曲风 6/6。
+  assert.equal(taste.players[0].share, 0.8);
+  assert.equal(taste.topGenres[0].name, '流行');
+  assert.equal(taste.topGenres[0].count, 6);
+  assert.equal(taste.topGenres[0].share, 1);
   assert.match(taste.summary, /9 次播放/);
   assert.match(taste.summary, /4 次来自更新前/);
+});
+
+test('播放器占比排除 unknown，曲风占比排除没有曲风标签的播放', () => {
+  const day = { ...history.days[0], players: [{ app: 'unknown', count: 1 }, { app: 'cloudmusic', count: 4 }] };
+  const taste = buildTaste({ ...history, days: [day] }, 30, 0, new Map([
+    [JSON.stringify(['晴天', '周杰伦', '叶惠美']), ['流行']],
+  ]), {
+    totalPlays: 7,
+    tracks: [{ title: '晴天', artist: '周杰伦', album: '叶惠美', count: 2 }],
+    artists: [{ name: '周杰伦', count: 2 }],
+  });
+  assert.equal(taste.players[0].share, 1);
+  assert.equal(taste.topGenres[0].share, 1);
+  assert.ok(!taste.players.some(item => item.app === 'unknown'));
 });
 
 test('口味档案单独持久化并清除', async () => {

@@ -212,6 +212,14 @@ export class MusicWorld implements World {
       : null;
     const dayPlays = history.days.reduce((sum, day) => sum + day.plays, 0);
     const earlierPlays = Math.max(0, cumulative.totalPlays - dayPlays);
+    // 日历默认展示所选窗口；「全部」用最早记录到今天，最多一年，避免一次渲染多年。
+    const startDate = history.days[0]?.date;
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const spanDays = startDate
+      ? Math.floor((Date.parse(`${todayKey}T00:00:00`) - Date.parse(`${startDate}T00:00:00`)) / 86_400_000) + 1
+      : 0;
+    const calendarDays = window >= 3650 ? Math.min(365, Math.max(7, spanDays)) : window;
     const entries = this.preferences ? await this.preferences.list() : [];
     const ranking = await this.listening.ranking();
     return {
@@ -224,13 +232,14 @@ export class MusicWorld implements World {
       updatedAt: taste?.updatedAt ?? new Date().toISOString(),
       totalPlays: taste?.totalPlays ?? (history.status === 'ok' ? history.totalPlays : cumulative.totalPlays),
       recordedDays: history.days.length,
+      calendarDays,
       totals: {
         tracks: ranking.storedTracks,
         artists: ranking.storedArtists,
         notes: this.notes?.stat() ?? '未启用',
         tags: this.tags?.stat() ?? '未启用',
       },
-      daily: history.days.slice(0, 30).reverse().map(day => ({ date: day.date, plays: day.plays })),
+      daily: history.days.slice(-calendarDays).map(day => ({ date: day.date, plays: day.plays })),
       hours: taste?.hours ?? Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 })),
       topArtists: taste?.topArtists ?? [],
       topGenres: taste?.topGenres ?? [],
