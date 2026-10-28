@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MusicWorld } from '../src/world.ts';
 import { configGroups, defaults, matchPlayer, PLAYERS, playerOrder } from '../src/config.ts';
-import { parseSnapshot } from '../src/state.ts';
+import { parseCandidates, parseSnapshot } from '../src/state.ts';
 
 test('webUi 提供实时状态面板与快照', async () => {
   const world = new MusicWorld(defaults(), () => {});
@@ -13,11 +13,12 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(web.badges, undefined);
   assert.equal(web.panels?.[0]?.id, 'live-status');
   assert.equal(web.panels?.[1]?.id, 'connection-check');
-  assert.equal(web.panels?.[2]?.id, 'listening-ranking');
-  assert.equal(web.panels?.[3]?.id, 'profile-analysis');
-  assert.equal(web.panels?.[4]?.id, 'data-overview');
-  assert.equal(web.panels?.[5]?.id, 'data-cleanup');
-  assert.equal(web.panels?.[6]?.id, 'settings');
+  assert.equal(web.panels?.[2]?.id, 'reader-diagnostics');
+  assert.equal(web.panels?.[3]?.id, 'listening-ranking');
+  assert.equal(web.panels?.[4]?.id, 'profile-analysis');
+  assert.equal(web.panels?.[5]?.id, 'data-overview');
+  assert.equal(web.panels?.[6]?.id, 'data-cleanup');
+  assert.equal(web.panels?.[7]?.id, 'settings');
   assert.equal(web.config, undefined);
   assert.equal(web.storage, undefined);
   const snap = await web.invoke?.('live-status', 'snapshot', []) as any;
@@ -67,8 +68,16 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback']);
   assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
   assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify');
+  const diagnostics = await web.invoke!('reader-diagnostics', 'snapshot', []) as any;
+  assert.equal(diagnostics.status, 'ok');
+  assert.deepEqual(diagnostics.priority.map((item: any) => item.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
+  assert.equal(diagnostics.current, null);
+  assert.equal(diagnostics.reader.running, false);
+  assert.deepEqual(diagnostics.reader.sessions, []);
+  assert.equal((await web.invoke!('reader-diagnostics', 'restart', []) as any).status, 'unavailable');
   await assert.rejects(web.invoke!('live-status', 'other', []), /未知的状态请求/);
   await assert.rejects(web.invoke!('connection-check', 'other', []), /未知的连接检查请求/);
+  await assert.rejects(web.invoke!('reader-diagnostics', 'other', []), /未知的读取诊断请求/);
   await assert.rejects(web.invoke!('settings', 'other', []), /未知的设置请求/);
 });
 
@@ -245,6 +254,28 @@ test('解析媒体快照时保留播放位置、曲目时长与播放器能力',
   } });
   assert.equal(fallback.track?.timeline, false);
   assert.equal(fallback.track?.player, 'kugou');
+});
+
+test('解析读取候选并过滤无效项', () => {
+  const parsed = parseCandidates({
+    sessions: [
+      { app: 'QQMusic.exe', player: 'qq', status: 'playing', title: '晴天', artist: '周杰伦',
+        album: '叶惠美', timeline: true, positionSeconds: 3, durationSeconds: 269 },
+      { app: '', player: 'qq', status: 'playing', title: '', timeline: false },
+      { app: 'KuGou.exe', player: 'kugou', status: 'paused', title: '起风了', timeline: false },
+    ],
+    windowCandidates: [
+      { app: 'cloudmusic', player: 'netease', title: '晴天 - 周杰伦' },
+      { app: 'cloudmusic', player: 'netease' },
+    ],
+    error: '示例错误',
+  });
+  assert.equal(parsed.sessions.length, 2);
+  assert.equal(parsed.sessions[0].timeline, true);
+  assert.equal(parsed.sessions[0].positionSeconds, 3);
+  assert.equal(parsed.sessions[1].status, 'paused');
+  assert.equal(parsed.windows.length, 1);
+  assert.equal(parsed.error, '示例错误');
 });
 
 test('官方播放器清单、优先级归一化与匹配', () => {

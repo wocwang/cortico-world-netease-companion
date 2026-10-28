@@ -15,6 +15,21 @@ export interface Track {
   durationSeconds?: number;
 }
 export interface Snapshot { track: Track | null; error?: string }
+/** 读取脚本上报的单个 SMTC 会话；选择由 TypeScript 侧完成。 */
+export interface SessionCandidate {
+  app: string;
+  player: string;
+  status: 'playing' | 'paused' | 'unknown';
+  title: string;
+  artist: string;
+  album: string;
+  timeline: boolean;
+  positionSeconds?: number;
+  durationSeconds?: number;
+}
+/** SMTC 不可用时的窗口标题候选。 */
+export interface WindowCandidate { app: string; player: string; title: string }
+export interface MediaCandidates { sessions: SessionCandidate[]; windows: WindowCandidate[]; error?: string }
 const clean = (s: unknown) => typeof s === 'string' ? s.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300) : '';
 export function parseSnapshot(input: unknown): Snapshot {
   if (!input || typeof input !== 'object') throw new Error('Invalid media snapshot');
@@ -33,6 +48,43 @@ export function parseSnapshot(input: unknown): Snapshot {
       ? { positionSeconds: t.positionSeconds } : {}),
     ...(typeof t.durationSeconds === 'number' && Number.isFinite(t.durationSeconds) && t.durationSeconds > 0
       ? { durationSeconds: t.durationSeconds } : {}) } };
+}
+const candidateNumber = (value: unknown, min: number): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= min ? value : undefined;
+/** 解析读取脚本上报的全部会话与窗口候选；选择策略在 TrackSelector 里。 */
+export function parseCandidates(input: unknown): MediaCandidates {
+  if (!input || typeof input !== 'object') throw new Error('Invalid media candidates');
+  const raw = input as Record<string, unknown>;
+  if (!Array.isArray(raw.sessions) && !Array.isArray(raw.windowCandidates)) throw new Error('Missing media candidates');
+  const sessions: SessionCandidate[] = [];
+  for (const item of (Array.isArray(raw.sessions) ? raw.sessions : []).slice(0, 16)) {
+    if (!item || typeof item !== 'object') continue;
+    const value = item as Record<string, unknown>;
+    const title = clean(value.title);
+    const player = clean(value.player);
+    const app = clean(value.app);
+    if (!title || !player || !app) continue;
+    sessions.push({
+      title, player, app,
+      artist: clean(value.artist), album: clean(value.album),
+      status: value.status === 'playing' || value.status === 'paused' ? value.status : 'unknown',
+      timeline: value.timeline === true,
+      ...(candidateNumber(value.positionSeconds, 0) !== undefined
+        ? { positionSeconds: candidateNumber(value.positionSeconds, 0) } : {}),
+      ...(candidateNumber(value.durationSeconds, 0.001) !== undefined
+        ? { durationSeconds: candidateNumber(value.durationSeconds, 0.001) } : {}),
+    });
+  }
+  const windows: WindowCandidate[] = [];
+  for (const item of (Array.isArray(raw.windowCandidates) ? raw.windowCandidates : []).slice(0, 16)) {
+    if (!item || typeof item !== 'object') continue;
+    const value = item as Record<string, unknown>;
+    const title = clean(value.title);
+    const player = clean(value.player);
+    const app = clean(value.app);
+    if (title && player && app) windows.push({ title, player, app });
+  }
+  return { sessions, windows, ...(clean(raw.error) ? { error: clean(raw.error) } : {}) };
 }
 const key = (t: Track) => JSON.stringify([t.title, t.artist, t.album]);
 const seconds = (v: number, fallback: number, min: number, max: number) =>

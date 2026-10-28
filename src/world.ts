@@ -3,8 +3,8 @@ import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { StoragePart, ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
-import { configGroups, commentLimits, lyricLimits, listeningLimits, matchPlayer, normalizeConfigPatch, PLAYERS, segmentLimits, type MusicConfig } from './config.ts';
-import { WindowsReader, type Reader } from './reader.ts';
+import { configGroups, commentLimits, lyricLimits, listeningLimits, matchPlayer, normalizeConfigPatch, PLAYERS, playerEnv, playerOrder, segmentLimits, type MusicConfig } from './config.ts';
+import { WindowsReader, type Reader, type ReaderDiagnostics } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
 import { briefLyrics, currentIndex, lyricsLabel, type LyricsReference } from './lyrics.ts';
@@ -352,10 +352,35 @@ export class MusicWorld implements World {
           supported: player !== undefined,
         };
       });
-      return { apps, sessions, error: parsed.error ? String(parsed.error) : '' };
+      return { apps, sessions, error: parsed.error ? String(parsed.error) : '',
+        currentPlayer: this.state.current?.player ?? null,
+        currentTrack: this.state.current ? `${this.state.current.title}${this.state.current.artist ? ' - ' + this.state.current.artist : ''}` : '' };
     } catch (error) {
       return { apps: [], sessions: [], error: error instanceof Error ? error.message : String(error) };
     }
+  }
+  /** 「读取诊断」页用：当前读取器看到的全部候选、选择结果与配置优先级。 */
+  private readerDiagnostics(): unknown {
+    const priority = playerOrder(this.cfg.playerPriority).map(id => {
+      const player = PLAYERS.find(item => item.id === id)!;
+      return { id, label: player.label, labelEn: player.labelEn, timeline: player.timeline };
+    });
+    const diagnostics: ReaderDiagnostics | null = this.reader.diagnostics?.() ?? null;
+    return {
+      status: 'ok',
+      reading: this.readingLabel(),
+      error: this.error || null,
+      priority,
+      current: this.state.current ? {
+        ...this.state.current,
+        playerLabel: PLAYERS.find(item => item.id === this.state.current?.player)?.label ?? null,
+      } : null,
+      observedAt: this.state.observedAt ? new Date(this.state.observedAt).toISOString() : null,
+      reader: diagnostics ? {
+        ...diagnostics,
+        updatedAt: diagnostics.updatedAt ? new Date(diagnostics.updatedAt).toISOString() : null,
+      } : { status: 'unavailable' },
+    };
   }
   webUi(): WorldWebUiDecl {
     return {
@@ -364,6 +389,7 @@ export class MusicWorld implements World {
       panels: [
         { id: 'live-status', title: '实时状态', description: '每 2 秒刷新读取状态、当前曲目、评论区与歌手资料' },
         { id: 'connection-check', title: '连接检查', description: '检测音乐软件安装、运行状态与 SMTC 会话，并给出开启指引' },
+        { id: 'reader-diagnostics', title: '读取诊断', description: '查看读取器命中的播放器、全部 SMTC 会话与窗口候选，并可单独重启读取器' },
         { id: 'listening-ranking', title: '听歌排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
         { id: 'profile-analysis', title: '个人画像', description: '按天汇总的听歌节奏、常听歌手、循环曲、播放器占比与口味画像' },
         { id: 'data-overview', title: '数据一览', description: '只读查看本插件各数据文件存了什么、占多大，不提供清理操作' },
@@ -373,6 +399,9 @@ export class MusicWorld implements World {
       invoke: async (panel, method, args) => {
         if (panel === 'connection-check' && method === 'status') return this.connectionStatus();
         if (panel === 'connection-check') throw new Error('未知的连接检查请求');
+        if (panel === 'reader-diagnostics' && method === 'snapshot') return this.readerDiagnostics();
+        if (panel === 'reader-diagnostics' && method === 'restart') return this.restartReader();
+        if (panel === 'reader-diagnostics') throw new Error('未知的读取诊断请求');
         if (panel === 'profile-analysis' && method === 'snapshot') return this.profileSnapshot(args?.[0]);
         if (panel === 'profile-analysis') throw new Error('未知的画像请求');
         if (panel === 'data-overview' && method === 'snapshot') return this.overviewSnapshot();
@@ -498,7 +527,14 @@ export class MusicWorld implements World {
           throw new Error('action 必须是 pause / resume / next / prev');
         if (this.cfg.allowPlaybackControl !== true)
           return JSON.stringify({ status: 'disabled', reason: '播放控制未开启；需要在 World 设置中允许替用户暂停/切歌' });
-        const result = await runControl(action as ControlAction, this.state.current?.app ?? '');
+        const current = this.state.current;
+        const player = current?.player ? PLAYERS.find(item => item.id === current.player) : undefined;
+        const result = await runControl(action as ControlAction, {
+          match: current?.app ?? '',
+          player: current?.player ?? '',
+          session: player?.session ?? '',
+          priority: playerEnv(this.cfg.playerPriority),
+        });
         return JSON.stringify({ status: result.ok ? 'ok' : 'unavailable', action, ...result });
       }
       if (decl.name === 'music_pick') {
@@ -608,6 +644,10 @@ export class MusicWorld implements World {
     this.lastCommented = undefined;
     this.lastStateAt = 0;
     this.playback = new PlaybackStateTracker();
+    this.startReader(generation);
+    this.timer = setInterval(() => { void this.tick(); }, 1000);
+  }
+  private startReader(generation: number): void {
     this.reader.start(snapshot => {
       if (generation !== this.generation) return;
       this.observe(snapshot);
@@ -616,7 +656,15 @@ export class MusicWorld implements World {
       this.error = message;
       this.observe({ track: null, error: message });
     });
-    this.timer = setInterval(() => { void this.tick(); }, 1000);
+  }
+  /** 「读取诊断」页用：手动重启读取器，不重启整个 World。 */
+  private async restartReader(): Promise<{ status: 'ok' | 'unavailable'; reason?: string }> {
+    if (!this.host) return { status: 'unavailable', reason: 'World 未启动' };
+    this.error = '';
+    await this.reader.stop();
+    if (!this.host) return { status: 'unavailable', reason: 'World 已停止' };
+    this.startReader(this.generation);
+    return { status: 'ok' };
   }
   private observe(snapshot: Snapshot): void {
     this.error = snapshot.error || '';

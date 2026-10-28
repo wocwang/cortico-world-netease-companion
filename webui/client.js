@@ -23,6 +23,7 @@ export default {
             : `"${title}" must be between ${min} and ${max}; not saved`,
           moveUp: zh ? '上移' : 'Up',
           moveDown: zh ? '下移' : 'Down',
+          dragHint: zh ? '拖动条目标调整顺序' : 'Drag an item to reorder',
           noTimeline: zh ? '无进度' : 'No timeline',
           saveFailed: msg => zh ? `保存失败：${msg}` : `Save failed: ${msg}`,
           loadFailed: msg => zh ? `读取配置失败：${msg}` : `Could not read settings: ${msg}`,
@@ -143,6 +144,7 @@ export default {
               return player ? (zh ? player.label : player.labelEn) : id;
             };
             let order = Array.isArray(field.value) ? field.value.slice() : players.map(player => player.id);
+            let dragIndex = -1;
             const node = ui.h('div');
             const move = (index, delta) => {
               const target = index + delta;
@@ -156,6 +158,20 @@ export default {
               order.forEach((id, index) => {
                 const row = ui.rowbar();
                 const player = players.find(item => item.id === id);
+                row.draggable = true;
+                row.title = text.dragHint;
+                row.addEventListener('dragstart', () => { dragIndex = index; });
+                row.addEventListener('dragover', event => event.preventDefault());
+                row.addEventListener('drop', event => {
+                  event.preventDefault();
+                  if (dragIndex < 0 || dragIndex === index) return;
+                  const [moved] = order.splice(dragIndex, 1);
+                  order.splice(index, 0, moved);
+                  dragIndex = -1;
+                  render();
+                  changed();
+                });
+                row.addEventListener('dragend', () => { dragIndex = -1; });
                 row.append(ui.pill(String(index + 1), 'plain'), ui.h('span', 'grow'), ui.h('span', '', nameOf(id)));
                 if (player && !player.timeline) row.append(ui.pill(text.noTimeline, 'plain'));
                 const up = ui.button(text.moveUp, { size: 'sm', onClick: () => move(index, -1) });
@@ -264,6 +280,7 @@ export default {
           disconnected: zh ? '未检测到 SMTC' : 'No SMTC session',
           supported: zh ? '官方支持' : 'Supported',
           unsupported: zh ? '未支持' : 'Unsupported',
+          readingNow: zh ? '正在读取' : 'Reading now',
           sessions: zh ? '当前 SMTC 会话' : 'SMTC sessions',
           sessionsDesc: zh ? 'Windows 当前暴露的媒体会话，未匹配到官方播放器时也会列在这里' : 'Media sessions Windows currently exposes, including apps outside the official players',
           empty: zh ? '当前没有可用的 SMTC 会话' : 'No SMTC session available',
@@ -289,7 +306,7 @@ export default {
         bar.append(ui.h('span', 'grow'), ui.button(text.recheck, { size: 'sm', onClick: () => void load() }));
         ctx.root.append(bar, summary, appsHost, sessionSection, status);
 
-        let state = { apps: [], sessions: [], error: '' };
+        let state = { apps: [], sessions: [], error: '', currentPlayer: null, currentTrack: '' };
 
         const appName = app => (zh ? app.label : app.labelEn) || app.name || app.id;
         const hasSession = app => (state.sessions || []).some(session => session.player === app.id);
@@ -312,6 +329,8 @@ export default {
             apps: Array.isArray(data?.apps) ? data.apps : [],
             sessions: Array.isArray(data?.sessions) ? data.sessions : [],
             error: data?.error ? String(data.error) : '',
+            currentPlayer: data?.currentPlayer ? String(data.currentPlayer) : null,
+            currentTrack: data?.currentTrack ? String(data.currentTrack) : '',
           };
           summary.replaceChildren(ui.statgrid([
             { k: text.installed, v: state.apps.filter(app => app.installed).length, unit: zh ? '个' : '', accent: true },
@@ -328,6 +347,7 @@ export default {
               ui.pill(app.running ? text.running : text.stopped, app.running ? 'on' : 'plain'),
               ui.pill(linked ? text.connected : text.disconnected, linked ? 'on' : 'off'),
             );
+            if (state.currentPlayer === app.id) pills.append(ui.pill(text.readingNow, 'on'));
             sheet.body.appendChild(pills);
             if (app.path) sheet.body.appendChild(ui.h('div', 'tdesc', String(app.path)));
             const capability = zh ? app.note : app.noteEn;
@@ -361,6 +381,174 @@ export default {
         };
 
         void load();
+      },
+    },
+    'reader-diagnostics': {
+      mount(ctx) {
+        const ui = ctx.ui;
+        const zh = String(ctx.language ?? 'zh').startsWith('zh');
+        const text = {
+          refresh: zh ? '刷新' : 'Refresh',
+          restart: zh ? '重启读取器' : 'Restart reader',
+          restarting: zh ? '正在重启读取器…' : 'Restarting reader…',
+          restarted: zh ? '读取器已重启' : 'Reader restarted',
+          checking: zh ? '正在读取…' : 'Reading…',
+          checked: time => zh ? `读取于 ${time}` : `Read at ${time}`,
+          failed: msg => zh ? `读取失败：${msg}` : `Read failed: ${msg}`,
+          reader: zh ? '读取器' : 'Reader',
+          running: zh ? '运行中' : 'Running',
+          stopped: zh ? '未运行' : 'Stopped',
+          sessions: zh ? 'SMTC 会话' : 'SMTC sessions',
+          windows: zh ? '窗口候选' : 'Window candidates',
+          reading: zh ? '读取状态' : 'Reading',
+          track: zh ? '当前曲目' : 'Track',
+          player: zh ? '播放器' : 'Player',
+          source: zh ? '来源' : 'Source',
+          observed: zh ? '最近观测' : 'Observed',
+          updated: zh ? '诊断更新时间' : 'Diagnostics updated',
+          priority: zh ? '优先级' : 'Priority',
+          priorityDesc: zh ? '靠前的播放器优先；当前播放器仍在播放时会有短暂粘性' : 'Earlier players win; the current player keeps short stickiness while still playing',
+          selection: zh ? '本次选择' : 'Selection',
+          selected: zh ? '选中' : 'Selected',
+          reason: zh ? '原因' : 'Reason',
+          sticky: zh ? '粘性' : 'Sticky',
+          pending: zh ? '待切换' : 'Pending switch',
+          none: zh ? '无' : 'None',
+          timeline: zh ? '有时间轴' : 'Timeline',
+          noTimeline: zh ? '无进度' : 'No timeline',
+          emptySessions: zh ? '没有官方播放器的 SMTC 会话' : 'No official-player SMTC session',
+          emptyWindows: zh ? '没有窗口标题候选' : 'No window-title candidate',
+          currentEmpty: zh ? '尚未读取到当前曲目' : 'No current track yet',
+        };
+        const reasonLabel = reason => {
+          const labels = {
+            sticky: zh ? '保持当前播放器（粘性）' : 'Keep current player (sticky)',
+            'priority-playing': zh ? '按优先级选择正在播放的会话' : 'Priority picked a playing session',
+            'priority-paused': zh ? '按优先级选择暂停会话' : 'Priority picked a paused session',
+            'window-sticky': zh ? '保持当前窗口标题来源' : 'Keep current window-title source',
+            'window-priority': zh ? '按优先级选择窗口标题' : 'Priority picked a window title',
+          };
+          return labels[reason] || reason || text.none;
+        };
+
+        const bar = ui.rowbar();
+        const status = ui.msgline('');
+        const summary = ui.h('div');
+        const currentHost = ui.h('div');
+        const priorityRow = ui.rowbar();
+        const selectionHost = ui.h('div');
+        const sessions = ui.table({
+          head: zh ? ['播放器', '应用', '状态', '曲目', '歌手', '时间轴'] : ['Player', 'App', 'State', 'Track', 'Artist', 'Timeline'],
+          maxHeight: '24vh',
+        });
+        const windows = ui.table({
+          head: zh ? ['播放器', '进程', '窗口标题'] : ['Player', 'Process', 'Window title'],
+          maxHeight: '18vh',
+        });
+        const sessionSection = ui.section(text.sessions, text.priorityDesc);
+        const windowSection = ui.section(text.windows);
+        sessionSection.append(priorityRow, sessions.el);
+        windowSection.append(windows.el);
+        const refresh = ui.button(text.refresh, { size: 'sm', onClick: () => void load() });
+        const restart = ui.button(text.restart, { size: 'sm', onClick: () => void restartReader() });
+        bar.append(ui.h('span', 'grow'), refresh, restart);
+        ctx.root.append(bar, summary, currentHost, sessionSection, windowSection, selectionHost, status);
+
+        const playerName = (priority, id) => {
+          const player = (priority || []).find(item => item.id === id);
+          return player ? (zh ? player.label : player.labelEn) : (id || '-');
+        };
+        const stateLabel = value => {
+          const name = String(value || '').toLowerCase();
+          if (name === 'playing') return zh ? '播放中' : 'Playing';
+          if (name === 'paused') return zh ? '已暂停' : 'Paused';
+          if (name === 'stopped') return zh ? '已停止' : 'Stopped';
+          return value || '-';
+        };
+        const draw = data => {
+          const reader = data?.reader && data.reader.status !== 'unavailable' ? data.reader : null;
+          const priority = Array.isArray(data?.priority) ? data.priority : [];
+          const sessionRows = Array.isArray(reader?.sessions) ? reader.sessions : [];
+          const windowRows = Array.isArray(reader?.windows) ? reader.windows : [];
+          summary.replaceChildren(ui.statgrid([
+            { k: text.reader, v: reader ? (reader.running ? text.running : text.stopped) : text.stopped, accent: true },
+            { k: text.sessions, v: sessionRows.length, unit: zh ? '个' : '' },
+            { k: text.windows, v: windowRows.length, unit: zh ? '个' : '' },
+          ]));
+          const current = data?.current;
+          currentHost.replaceChildren(current ? ui.kv([
+            { k: text.reading, v: data.reading || '-' },
+            { k: text.track, v: `${current.title}${current.artist ? ' - ' + current.artist : ''}` },
+            { k: text.player, v: current.playerLabel || playerName(priority, current.player) },
+            { k: text.source, v: current.method || '-' },
+            { k: text.observed, v: data.observedAt ? new Date(data.observedAt).toLocaleTimeString() : '-' },
+            { k: text.updated, v: reader?.updatedAt ? new Date(reader.updatedAt).toLocaleTimeString() : '-' },
+          ]) : ui.placeholder(text.currentEmpty));
+
+          priorityRow.replaceChildren();
+          for (const [index, item] of priority.entries()) {
+            const pill = ui.pill(`${index + 1} ${zh ? item.label : item.labelEn}`, 'plain');
+            priorityRow.append(pill);
+            if (!item.timeline) priorityRow.append(ui.pill(text.noTimeline, 'plain'));
+          }
+          if (!priority.length) priorityRow.append(ui.pill(text.none, 'plain'));
+
+          sessions.clear(sessionRows.length ? '' : text.emptySessions);
+          for (const session of sessionRows) {
+            sessions.addRow([
+              playerName(priority, session.player), session.app || '-', stateLabel(session.status),
+              session.title || '-', session.artist || '-', session.timeline ? text.timeline : text.noTimeline,
+            ]);
+          }
+          windows.clear(windowRows.length ? '' : text.emptyWindows);
+          for (const window of windowRows) {
+            windows.addRow([playerName(priority, window.player), window.app || '-', window.title || '-']);
+          }
+          const selection = reader?.selection;
+          const selector = reader?.selector || {};
+          selectionHost.replaceChildren(ui.kv([
+            { k: text.selected, v: selection ? `${playerName(priority, selection.player)} · ${selection.app}` : text.none },
+            { k: text.reason, v: reasonLabel(selection?.reason) },
+            { k: text.sticky, v: selector.sticky ? `${playerName(priority, selector.sticky.player)} · ${selector.sticky.app}（${selector.sticky.method}）` : text.none },
+            { k: text.pending, v: selector.pending ? `${playerName(priority, selector.pending.player)} · ${selector.pending.app}（${selector.pending.count}）` : text.none },
+          ]));
+          if (data?.error) {
+            status.classList.add('bad');
+            status.textContent = text.failed(data.error);
+          } else {
+            status.classList.remove('bad');
+            status.textContent = text.checked(new Date().toLocaleTimeString());
+          }
+        };
+
+        const load = async () => {
+          status.classList.remove('bad');
+          status.textContent = text.checking;
+          try {
+            draw(await ctx.invoke('snapshot'));
+          } catch (e) {
+            status.classList.add('bad');
+            status.textContent = text.failed(e instanceof Error ? e.message : String(e));
+          }
+        };
+        const restartReader = async () => {
+          status.classList.remove('bad');
+          status.textContent = text.restarting;
+          restart.disabled = true;
+          try {
+            const result = await ctx.invoke('restart');
+            status.textContent = result?.status === 'ok' ? text.restarted : text.failed(result?.reason || '');
+            await load();
+          } catch (e) {
+            status.classList.add('bad');
+            status.textContent = text.failed(e instanceof Error ? e.message : String(e));
+          } finally {
+            restart.disabled = false;
+          }
+        };
+
+        void load();
+        ctx.interval(() => void load(), 2000);
       },
     },
     'live-status': {

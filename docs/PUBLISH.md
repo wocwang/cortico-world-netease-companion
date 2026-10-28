@@ -8,8 +8,8 @@
 
 ## 当前状态
 
-- 本分支版本：`1.14.0`，MIT，Windows，World API 6。
-- 发布包名：`better-cortico-world-netease-companion`（历史发布 1.0.0、1.0.1、1.2.0、1.3.0、1.4.0、1.4.1、1.5.0、1.6.0、1.7.0、1.8.0、1.9.0、1.9.1、1.10.0、1.11.0、1.12.0、1.13.0；1.1.0 未单独发布，内容包含在 1.2.0 中；当前版本 1.14.0，发布状态以 npm registry 为准；1.14.0 已发布）。
+- 本分支版本：`1.15.0`，MIT，Windows，World API 6。
+- 发布包名：`better-cortico-world-netease-companion`（历史发布 1.0.0、1.0.1、1.2.0、1.3.0、1.4.0、1.4.1、1.5.0、1.6.0、1.7.0、1.8.0、1.9.0、1.9.1、1.10.0、1.11.0、1.12.0、1.13.0、1.14.0；1.1.0 未单独发布，内容包含在 1.2.0 中；当前版本 1.15.0，发布状态以 npm registry 为准）。
 - 市场显示名：`听搭子`；原名 `cortico-world-netease-companion@0.3.2` 由原作者 `oceanxuhaiao` 持有，不能覆盖。
 - npm 账号已登录；发布时需要账号所有者提供 2FA 动态码（`--otp=`）。
 
@@ -35,6 +35,13 @@
 4. `npm publish --access public`。
 5. 在 Coopanion 扩展页刷新并搜索包名，验证安装、启用、更新和回退入口。
 6. 如需立即同步官方索引，在 https://github.com/Pal-AI-Lab/cortico-extensions/issues/new 创建标题为 `[sync] <包名>` 的 issue；这是索引同步，不是认证申请。
+
+## 自动发布
+
+- 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`：npm Automation token，需有该包的 publish 权限。没有这个 secret 时 `release.yml` 会在发布步骤失败。
+- 推送 `v*` 标签（内容需与 `package.json` 版本一致）后，`release.yml` 会依次运行类型检查、测试、`describe`、`check`，再执行 `npm publish --provenance --access public`，最后用 `GITHUB_TOKEN` 创建 GitHub Release。
+- `ci.yml` 在 main 推送和 PR 时运行同样的检查，并校验 `describe.json` 没有未提交的生成差异。
+- 本地仍可手动发布；自动流程只是为了减少漏跑测试或版本不一致。
 
 ## 以后更新
 

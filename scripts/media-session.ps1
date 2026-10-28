@@ -1,9 +1,9 @@
 # Windows PowerShell 5.1; one UTF-8 JSON snapshot per two seconds.
+# Reports every official-player SMTC session and window-title candidate.
+# Priority and stickiness are decided in TypeScript (src/selection.ts).
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
-# The World sends the official players in priority order as JSON; each entry has
-# id, session regex and window-process regex. Never fall back to arbitrary apps.
 $players = @()
 $playersJson = $env:MUSIC_PLAYER_ORDER
 if ($playersJson) {
@@ -52,56 +52,57 @@ try {
     $propertiesType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]
     $manager = Await-WinRT ($managerType::RequestAsync()) $managerType
 } catch { $initError = $_.Exception.Message }
+
 while ($true) {
-    $track = $null
+    $sessions = @()
+    $windowCandidates = @()
     $readError = $initError
     try {
         if ($null -ne $manager) {
-            $sessions = @($manager.GetSessions() | Where-Object {
+            $allSessions = @($manager.GetSessions() | Where-Object {
                 $_.GetPlaybackInfo().PlaybackStatus.ToString() -ne 'Closed'
             })
-            # Walk players in priority order. A playing session wins over any
-            # paused one; if nothing is playing, keep the highest-priority session.
-            $selected = $null
-            $selectedPlayer = ''
+            $seenApps = @{}
             foreach ($matcher in $sessionMatchers) {
-                $candidates = @($sessions | Where-Object { $matcher.regex.IsMatch($_.SourceAppUserModelId) })
-                if ($candidates.Count -eq 0) { continue }
-                $playing = $candidates | Where-Object { $_.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing' } | Select-Object -First 1
-                if ($null -ne $playing) { $selected = $playing; $selectedPlayer = $matcher.id; break }
-                if ($null -eq $selected) {
-                    $selected = $candidates | Select-Object -First 1
-                    $selectedPlayer = $matcher.id
-                }
-            }
-            if ($null -ne $selected) {
-                $props = Await-WinRT ($selected.TryGetMediaPropertiesAsync()) $propertiesType
-                if ($props.Title) {
-                    $status = 'unknown'
-                    switch ($selected.GetPlaybackInfo().PlaybackStatus.ToString()) {
-                        'Playing' { $status = 'playing' }
-                        'Paused' { $status = 'paused' }
-                        'Stopped' { $status = 'paused' }
-                        'Closed' { $status = 'paused' }
-                    }
-                    $track = @{ title = $props.Title; artist = $props.Artist; album = $props.AlbumTitle;
-                        app = $selected.SourceAppUserModelId; player = $selectedPlayer; status = $status;
-                        method = 'smtc'; timeline = $false }
+                foreach ($session in $allSessions) {
+                    if (-not $matcher.regex.IsMatch($session.SourceAppUserModelId)) { continue }
+                    if ($seenApps.ContainsKey($session.SourceAppUserModelId)) { continue }
+                    $seenApps[$session.SourceAppUserModelId] = $true
                     try {
-                        $timeline = $selected.GetTimelineProperties()
-                        $position = [double]$timeline.Position.TotalSeconds
-                        $end = [double]$timeline.EndTime.TotalSeconds
-                        $track.positionSeconds = $position
-                        if ($end -gt 0) { $track.durationSeconds = $end }
-                        # Kugou and similar players expose SMTC without a timeline.
-                        if ($position -gt 0 -or $end -gt 0) { $track.timeline = $true }
-                    } catch {}
+                        $props = Await-WinRT ($session.TryGetMediaPropertiesAsync()) $propertiesType
+                        if (-not $props.Title) { continue }
+                        $status = 'unknown'
+                        switch ($session.GetPlaybackInfo().PlaybackStatus.ToString()) {
+                            'Playing' { $status = 'playing' }
+                            'Paused' { $status = 'paused' }
+                            'Stopped' { $status = 'paused' }
+                        }
+                        $candidate = @{
+                            app = $session.SourceAppUserModelId; player = $matcher.id; status = $status;
+                            title = $props.Title; artist = $props.Artist; album = $props.AlbumTitle; timeline = $false
+                        }
+                        try {
+                            $timeline = $session.GetTimelineProperties()
+                            $position = [double]$timeline.Position.TotalSeconds
+                            $end = [double]$timeline.EndTime.TotalSeconds
+                            $candidate.positionSeconds = $position
+                            if ($end -gt 0) { $candidate.durationSeconds = $end }
+                            if ($position -gt 0 -or $end -gt 0) { $candidate.timeline = $true }
+                        } catch {}
+                        $sessions += $candidate
+                    } catch { }
                 }
             }
         }
-    } catch { $readError = $_.Exception.Message; $manager = $null; $initError = $readError }
-    if ($null -eq $track -and $env:MUSIC_WINDOW_FALLBACK -eq '1') {
+    } catch {
+        $readError = $_.Exception.Message
+        $manager = $null
+        $initError = $readError
+        $sessions = @()
+    }
+    if ($env:MUSIC_WINDOW_FALLBACK -eq '1') {
         # A title alone cannot prove playback or distinguish title/artist reliably.
+        # Emit one candidate per official player so TypeScript can apply priority.
         $processes = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle })
         foreach ($matcher in $windowMatchers) {
             $player = $processes | Where-Object {
@@ -110,16 +111,12 @@ while ($true) {
                 $_.MainWindowTitle -notmatch '^(\u7f51\u6613\u4e91\u97f3\u4e50|NetEase Cloud Music|QQ\u97f3\u4e50|Spotify)$'
             } | Select-Object -First 1
             if ($null -ne $player) {
-                $track = @{ title = $player.MainWindowTitle; artist = ''; album = '';
-                    app = $player.ProcessName; player = $matcher.id; status = 'unknown';
-                    method = 'window-title'; timeline = $false }
-                break
+                $windowCandidates += @{ app = $player.ProcessName; player = $matcher.id; title = $player.MainWindowTitle }
             }
         }
     }
-    $result = @{ track = $track }
-    if ($null -eq $track -and $readError) { $result.error = $readError }
-    [Console]::WriteLine(($result | ConvertTo-Json -Compress -Depth 4))
+    $result = @{ sessions = $sessions; windowCandidates = $windowCandidates; error = $readError }
+    [Console]::WriteLine(($result | ConvertTo-Json -Compress -Depth 6))
     # A failed WinRT initialization is recoverable (service restart / login / wake).
     if ($null -eq $manager) {
         try { $manager = Await-WinRT ($managerType::RequestAsync()) $managerType; $initError = '' } catch { $initError = $_.Exception.Message }

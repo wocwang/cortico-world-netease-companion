@@ -22,21 +22,22 @@ const clean = (value: unknown, max = 120): string =>
 const strArray = (value: unknown): string[] =>
   Array.isArray(value) ? value.map(item => clean((item as { name?: unknown })?.name)).filter(Boolean) : [];
 
-async function fetchJson(request: typeof fetch, url: string, headers: Record<string, string>): Promise<any> {
-  const response = await request(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+async function fetchJson(request: typeof fetch, url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<any> {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  const response = await request(url, { headers, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
 
 /** 网易云公开搜索接口；失败时抛错，方便上层区分“没搜到”和“被限流”。 */
-export async function searchNetease(query: string, request: typeof fetch = fetch): Promise<PickTrack[]> {
+export async function searchNetease(query: string, request: typeof fetch = fetch, signal?: AbortSignal): Promise<PickTrack[]> {
   const url = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1&offset=0&limit=8`;
   const data = await fetchJson(request, url, {
     accept: 'application/json',
     'user-agent': USER_AGENT,
     referer: 'https://music.163.com/',
     cookie: 'appver=2.0.2',
-  });
+  }, signal);
   if (data?.code !== 200) throw new Error(`网易云搜索未成功（${data?.code ?? 'unknown'}）`);
   const songs = Array.isArray(data?.result?.songs) ? data.result.songs : [];
   return songs.map((song: any): PickTrack => {
@@ -53,13 +54,13 @@ export async function searchNetease(query: string, request: typeof fetch = fetch
 }
 
 /** QQ 音乐公开搜索接口；返回歌曲详情页链接，不能自动点播。 */
-export async function searchQQ(query: string, request: typeof fetch = fetch): Promise<PickTrack[]> {
+export async function searchQQ(query: string, request: typeof fetch = fetch, signal?: AbortSignal): Promise<PickTrack[]> {
   const url = `https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=${encodeURIComponent(query)}&format=json&n=8&p=1`;
   const data = await fetchJson(request, url, {
     accept: 'application/json',
     'user-agent': USER_AGENT,
     referer: 'https://y.qq.com/',
-  });
+  }, signal);
   const songs = Array.isArray(data?.data?.song?.list) ? data.data.song.list : [];
   return songs.map((song: any): PickTrack => {
     const mid = clean(song?.songmid);
@@ -94,8 +95,8 @@ export function pickBest(tracks: readonly PickTrack[], query: string): PickTrack
   return best?.track ?? null;
 }
 
-export async function searchAndPick(query: string, request: typeof fetch = fetch): Promise<PickResult> {
-  const [netease, qq] = await Promise.allSettled([searchNetease(query, request), searchQQ(query, request)]);
+export async function searchAndPick(query: string, request: typeof fetch = fetch, signal?: AbortSignal): Promise<PickResult> {
+  const [netease, qq] = await Promise.allSettled([searchNetease(query, request, signal), searchQQ(query, request, signal)]);
   const tracks = [
     ...(netease.status === 'fulfilled' ? netease.value : []),
     ...(qq.status === 'fulfilled' ? qq.value : []),

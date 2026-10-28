@@ -1,6 +1,7 @@
 import type { Track } from './state.ts';
 import { collectBackground, fetchBaiduSong, USER_AGENT, type BackgroundNote } from './sources.ts';
 import { fetchSongWiki, type SongWiki } from './wiki.ts';
+import { searchQQ } from './picker.ts';
 import { mergeTranslation, parseLrc, type LyricsLine, type LyricsReference } from './lyrics.ts';
 
 export type { LyricsReference } from './lyrics.ts';
@@ -522,6 +523,7 @@ export class NeteaseComments implements CommentProvider {
   private songs = new Map<string, { until: number; result: SongBackground }>();
   private durations = new Map<string, { until: number; ms: number | null }>();
   private lyricCache = new Map<string, { until: number; result: LyricsReference }>();
+  private sourceLabels = new Map<string, { until: number; labels: Array<{ title: string; artist: string; album: string }> }>();
   private blockedUntil = 0;
   constructor(private request: typeof fetch = fetch, private lyricRequest: typeof fetch = fetch) {}
   private async json(path: string, signal?: AbortSignal): Promise<any> {
@@ -590,8 +592,35 @@ export class NeteaseComments implements CommentProvider {
     }
     return songs;
   }
+  /**
+   * QQ 播放器先用 QQ 公开搜索补一层曲目标签，再回退到网易云检索。
+   * Spotify、酷狗、酷我没有可直接查询的评论/百科来源，仍回退到网易云。
+   */
+  private async preferredLabels(track: Track, signal?: AbortSignal): Promise<Array<{ title: string; artist: string; album: string }>> {
+    if (track.player !== 'qq') return [];
+    const key = trackKey(track);
+    const cached = this.sourceLabels.get(key);
+    if (cached && cached.until > Date.now()) return cached.labels;
+    const query = [track.title, track.artist].filter(Boolean).join(' ').trim();
+    let labels: Array<{ title: string; artist: string; album: string }> = [];
+    if (query) {
+      try {
+        const hits = await searchQQ(query, this.request, signal);
+        labels = hits
+          .filter(item => item.durationSeconds === 0 || item.durationSeconds >= 30)
+          .slice(0, 4)
+          .map(item => ({ title: item.title, artist: item.artist, album: item.album }));
+      } catch (e) {
+        if (signal?.aborted) throw e;
+      }
+    }
+    this.sourceLabels.set(key, { until: Date.now() + (labels.length ? 30 * 60_000 : 5 * 60_000), labels });
+    while (this.sourceLabels.size > 40) this.sourceLabels.delete(this.sourceLabels.keys().next().value!);
+    return labels;
+  }
   private async find(track: Track, signal?: AbortSignal): Promise<RankedSong[]> {
-    const labels = trackLabels(track);
+    // Keep the player-provided label first; source-specific labels are extra candidates.
+    const labels = [...trackLabels(track), ...await this.preferredLabels(track, signal)];
     const queries: string[] = [];
     const push = (query: string) => { const value = query.trim(); if (value && !queries.includes(value)) queries.push(value); };
     for (const label of labels.slice(0, 2)) {

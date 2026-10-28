@@ -37,6 +37,39 @@ test('读取器按优先级把官方播放器清单传给 PowerShell', async () 
   await reader.stop();
 });
 
+test('读取器用候选协议按优先级选择并上报诊断', async () => {
+  const child = new FakeChild();
+  const snapshots: any[] = [];
+  const reader = new WindowsReader(defaults(), (() => child) as any,
+    { heartbeatMs: 999999, checkMs: 999999, retryMs: 999999 });
+  reader.start(snapshot => snapshots.push(snapshot), () => {});
+  const send = (value: unknown) => new Promise<void>(resolve => {
+    child.stdout.write(JSON.stringify(value) + '\n', () => resolve());
+  });
+  const wait = () => new Promise(resolve => setTimeout(resolve, 20));
+  const qq = { app: 'QQMusic.exe', player: 'qq', status: 'playing', title: '晴天', artist: '周杰伦',
+    album: '叶惠美', timeline: true, durationSeconds: 269 };
+  const netease = { app: 'cloudmusic.exe', player: 'netease', status: 'playing', title: '晴天', artist: '周杰伦',
+    album: '叶惠美', timeline: true, durationSeconds: 269 };
+
+  await send({ sessions: [qq], windowCandidates: [] });
+  await wait();
+  assert.equal(snapshots.at(-1)?.track?.player, 'qq');
+  assert.equal(reader.diagnostics().selection?.player, 'qq');
+  assert.equal(reader.diagnostics().sessions.length, 1);
+
+  await send({ sessions: [qq, netease], windowCandidates: [] });
+  await wait();
+  assert.equal(snapshots.at(-1)?.track?.player, 'qq');
+  assert.equal(reader.diagnostics().selector.pending?.player, 'netease');
+
+  await send({ sessions: [qq, netease], windowCandidates: [] });
+  await wait();
+  assert.equal(snapshots.at(-1)?.track?.player, 'netease');
+  await reader.stop();
+  assert.equal(reader.diagnostics().running, false);
+});
+
 test('preflight 归一化播放器优先级并补齐官方项', () => {
   const patches: any[] = [];
   definition.preflight!({
