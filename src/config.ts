@@ -17,6 +17,7 @@ export interface MusicConfig {
   segmentEverySeconds: number;
   actionHints: boolean;
   allowPlaybackControl: boolean;
+  stateComments: boolean;
   artistContext: boolean;
   songContext: boolean;
   lyricsContext: boolean;
@@ -32,7 +33,8 @@ export const defaults = (): MusicConfig => ({
   sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic', windowFallback: true,
   windowFallbackProcess: 'cloudmusic|QQMusic|qqmusic', commentReference: true, maxCommentChars: 80,
   commentExcerpts: 10, announceTracks: true, segmentComments: false, segmentCount: 2, segmentEverySeconds: 60,
-  actionHints: true, allowPlaybackControl: false, artistContext: true, songContext: true,
+  actionHints: true, allowPlaybackControl: false, stateComments: true,
+  artistContext: true, songContext: true,
   lyricsContext: true, lyricsTranslation: true, lyricsLines: 12,
   listeningTrackLimit: 100, listeningArtistLimit: 30,
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
@@ -78,6 +80,7 @@ export const configGroups: ConfigGroup[] = [
         'worlds.netease-music.segmentEverySeconds': { type: 'integer', title: '无播放位置时的分段间隔（秒）', description: '0–300，默认 60。播放器不提供播放位置或时长时，按已播放时间每 N 秒检查一次分段；0 = 只按位置分段。', minimum: 0, maximum: 300, 'x-hot': true },
         'worlds.netease-music.actionHints': { type: 'boolean', title: '动作/表情提示', description: '按歌曲情绪提示桌宠使用形象已有的动作/表情；只使用当前形象支持的词，不会新增动作。', 'x-hot': true },
         'worlds.netease-music.allowPlaybackControl': { type: 'boolean', title: '允许替用户暂停/切歌', description: '开启后，桌宠只在用户明确要求时暂停、继续、上一首或下一首；不会主动控制播放。默认关闭。', 'x-hot': true },
+        'worlds.netease-music.stateComments': { type: 'boolean', title: '播放器状态提示', description: '播放器暂停、恢复或结束时，用一句很短的话回应；不会每首歌都发。默认开启。', 'x-hot': true },
         'worlds.netease-music.settleSeconds': { type: 'number', title: '曲目稳定等待（秒）', minimum: 2, maximum: 120, 'x-hot': true },
         'worlds.netease-music.cooldownSeconds': { type: 'integer', title: '主动评论最短间隔（秒）', description: '30–3600 秒。间隔越大评论越少；陪听画像会按用户明确要求的互动频率自动缩放实际间隔。仅在曲目稳定且满足间隔时触发，不是定时重复评论。', minimum: 30, maximum: 3600, 'x-hot': true },
         'worlds.netease-music.maxCommentChars': { type: 'integer', title: '评论最大字数', description: '10–500，默认 80。包含标点、数字与外语字符；只约束音乐主动评论，由桌宠模型遵循，不截断其他聊天。', minimum: 10, maximum: 500, 'x-hot': true },

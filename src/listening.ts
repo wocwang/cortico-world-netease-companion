@@ -58,12 +58,56 @@ export interface ListeningRelation {
   artist?: { name: string; count: number; lastAt: string };
 }
 
+export interface HistoryTrack { title: string; artist: string; album: string; count: number; lastAt: string }
+export interface HistoryArtist { name: string; count: number; lastAt: string }
+export interface ListeningDay {
+  date: string;
+  plays: number;
+  tracks: HistoryTrack[];
+  artists: HistoryArtist[];
+  hours: number[];
+  players: Array<{ app: string; count: number }>;
+}
+export interface ListeningHistory {
+  status: 'ok' | 'empty';
+  totalPlays: number;
+  days: ListeningDay[];
+}
+/** 累计排名口径：没有逐日记录时给个人画像兜底，不对应某个时间窗口。 */
+export interface CumulativeListening {
+  totalPlays: number;
+  tracks: Array<{ title: string; artist: string; album: string; count: number }>;
+  artists: Array<{ name: string; count: number }>;
+}
+export interface PruneResult {
+  keepDays: number;
+  removedDays: number;
+  removedPlays: number;
+  keptDays: number;
+  keptPlays: number;
+  keptTracks: number;
+  keptArtists: number;
+}
+
+/** 清理前预览：不改动文件，只算出按某保留天数会删掉多少。 */
+export interface PrunePreview {
+  keepDays: number;
+  removedDays: number;
+  removedPlays: number;
+  keptDays: number;
+  keptPlays: number;
+}
+
 /** 配置文件允许的上限；读取旧文件时也只保留这么多，防止异常文件拖慢界面。 */
 const ABSOLUTE_MAX_TRACKS = 500;
 const ABSOLUTE_MAX_ARTISTS = 100;
 const MAX_FIELD = 200;
 const MAX_SUMMARY = 220;
 const DWELL_SECONDS = 10;
+/** 单次查询的日历窗口上限；存储本身不按天数自动删除，只由用户手动清理。 */
+const MAX_WINDOW_DAYS = 36_500;
+const MAX_TRACKS_PER_DAY = 50;
+const MAX_ARTISTS_PER_DAY = 30;
 /** 曲目在切换或关闭播放器前至少稳定这么久，才算一次听歌记录。 */
 export const LISTENING_DWELL_MS = DWELL_SECONDS * 1000;
 
@@ -71,6 +115,7 @@ interface Data {
   totalPlays: number;
   tracks: ListeningTrack[];
   artists: ListeningArtist[];
+  days: ListeningDay[];
 }
 
 const text = (v: unknown) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, MAX_FIELD) : '';
@@ -90,6 +135,17 @@ function validArtist(v: unknown): v is ListeningArtist {
   const a = v as ListeningArtist | null;
   return !!a && typeof a.name === 'string' && a.name.length > 0
     && Number.isFinite(a.count) && a.count > 0 && typeof a.lastAt === 'string';
+}
+const localDate = (at: number): string => {
+  const date = new Date(at);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+function validDay(value: unknown): value is ListeningDay {
+  if (!value || typeof value !== 'object') return false;
+  const day = value as Record<string, unknown>;
+  return typeof day.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day.date)
+    && Number.isFinite(day.plays) && (day.plays as number) >= 0
+    && Array.isArray(day.tracks) && Array.isArray(day.artists) && Array.isArray(day.hours) && Array.isArray(day.players);
 }
 
 /**
@@ -163,6 +219,7 @@ export class ListeningMemoryStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
+    let data: Data;
     try {
       const raw = JSON.parse(await readFile(this.file, 'utf8'));
       const tracks = (Array.isArray(raw?.tracks) ? raw.tracks.filter(validTrack) : [])
@@ -171,18 +228,35 @@ export class ListeningMemoryStore {
       const artists = (Array.isArray(raw?.artists) ? raw.artists.filter(validArtist) : [])
         .sort((a: ListeningArtist, b: ListeningArtist) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
         .slice(0, ABSOLUTE_MAX_ARTISTS);
-      this.data = {
+      data = {
         totalPlays: Number.isFinite(raw?.totalPlays) ? Math.max(0, Math.floor(raw.totalPlays)) : 0,
         tracks, artists,
+        days: Array.isArray(raw?.days) ? raw.days.filter(validDay).sort((a: ListeningDay, b: ListeningDay) => a.date.localeCompare(b.date)) : [],
       };
     } catch {
-      this.data = { totalPlays: 0, tracks: [], artists: [] };
+      data = { totalPlays: 0, tracks: [], artists: [], days: [] };
     }
-    return this.data;
+    // 兼容 1.13.0 开发版拆出去的 history.json：合并后只保留 listening.json。
+    const legacy = join(this.dir, 'history.json');
+    try {
+      const parsed = JSON.parse(await readFile(legacy, 'utf8')) as { days?: unknown };
+      if (!data.days.length && Array.isArray(parsed?.days))
+        data.days = parsed.days.filter(validDay).sort((a, b) => a.date.localeCompare(b.date));
+      if (!data.totalPlays && data.days.length)
+        data.totalPlays = data.days.reduce((sum, day) => sum + day.plays, 0);
+      if (data.days.length) {
+        await this.save(data);
+        await rm(legacy, { force: true });
+      }
+    } catch {
+      // 没有旧文件或旧文件损坏时不迁移。
+    }
+    this.data = data;
+    return data;
   }
 
   /** 记录一次稳定收听。失败时静默返回 false，不影响播放器读取。 */
-  async record(track: { title?: string; artist?: string; album?: string }, at = Date.now(), count = 1): Promise<boolean> {
+  async record(track: { title?: string; artist?: string; album?: string; app?: string }, at = Date.now(), count = 1): Promise<boolean> {
     const title = text(track.title);
     if (!title) return false;
     const artist = text(track.artist), album = text(track.album);
@@ -214,10 +288,150 @@ export class ListeningMemoryStore {
         this.trimArtists(data, limits.artists, artistKey);
         data.tracks.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
         data.artists.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+        this.recordDay(data, { title, artist, album, app: text(track.app) }, at, times, k);
         await this.save(data);
       });
       return true;
     } catch { return false; }
+  }
+
+  private recordDay(data: Data, track: { title: string; artist: string; album: string; app: string },
+    at: number, times: number, trackKey: string): void {
+    const date = localDate(at);
+    let day = data.days.find(item => item.date === date);
+    if (!day) {
+      day = { date, plays: 0, tracks: [], artists: [], hours: Array(24).fill(0), players: [] };
+      data.days.push(day);
+    }
+    day.plays += times;
+    const iso = new Date(at).toISOString();
+    const hour = new Date(at).getHours();
+    day.hours[hour] = (day.hours[hour] ?? 0) + times;
+    const foundTrack = day.tracks.find(item => key(item.title, item.artist, item.album) === trackKey);
+    if (foundTrack) {
+      foundTrack.count += times;
+      foundTrack.lastAt = iso;
+    } else {
+      day.tracks.push({ title: track.title, artist: track.artist, album: track.album, count: times, lastAt: iso });
+    }
+    const artistName = track.artist || '未知歌手';
+    const foundArtist = day.artists.find(item => norm(item.name) === norm(artistName));
+    if (foundArtist) {
+      foundArtist.count += times;
+      foundArtist.lastAt = iso;
+      foundArtist.name = artistName;
+    } else {
+      day.artists.push({ name: artistName, count: times, lastAt: iso });
+    }
+    const app = track.app || 'unknown';
+    const foundPlayer = day.players.find(item => item.app === app);
+    if (foundPlayer) foundPlayer.count += times;
+    else day.players.push({ app, count: times });
+    day.tracks.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+    day.artists.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+    day.players.sort((a, b) => b.count - a.count);
+    day.tracks = day.tracks.slice(0, MAX_TRACKS_PER_DAY);
+    day.artists = day.artists.slice(0, MAX_ARTISTS_PER_DAY);
+    data.days.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  async history(days = 1): Promise<ListeningHistory> {
+    const data = await this.load();
+    const limit = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.floor(days)));
+    const sorted = [...data.days].sort((a, b) => b.date.localeCompare(a.date));
+    if (!sorted.length) return { status: 'empty', totalPlays: 0, days: [] };
+    const latest = sorted[0].date;
+    const cutoff = localDate(new Date(`${latest}T00:00:00`).getTime() - (limit - 1) * 86_400_000);
+    const list = sorted.filter(day => day.date >= cutoff).slice(0, limit);
+    return { status: list.length ? 'ok' : 'empty', totalPlays: list.reduce((sum, day) => sum + day.plays, 0), days: list };
+  }
+
+  /** 老版本只存了累计排名；逐日记录为空时，画像用这份数据兜底，避免升级后从零开始。 */
+  async cumulative(): Promise<CumulativeListening> {
+    const data = await this.load();
+    return {
+      totalPlays: data.totalPlays,
+      tracks: [...data.tracks]
+        .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+        .map(t => ({ title: t.title, artist: t.artist, album: t.album, count: t.count })),
+      artists: [...data.artists]
+        .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+        .map(a => ({ name: a.name, count: a.count })),
+    };
+  }
+
+  /** 选择保留天数时先预览：按同样的截止日期算出会删除多少天、多少次播放，不写文件。 */
+  async prunePreview(keepDays: number, now = Date.now()): Promise<PrunePreview> {
+    const keep = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.floor(Number.isFinite(keepDays) ? keepDays : 30)));
+    const data = await this.load();
+    const cutoff = localDate(now - (keep - 1) * 86_400_000);
+    let removedDays = 0;
+    let removedPlays = 0;
+    let keptDays = 0;
+    let keptPlays = 0;
+    for (const day of data.days) {
+      if (day.date < cutoff) { removedDays += 1; removedPlays += day.plays; }
+      else { keptDays += 1; keptPlays += day.plays; }
+    }
+    return { keepDays: keep, removedDays, removedPlays, keptDays, keptPlays };
+  }
+
+  /**
+   * 手动清理：只保留最近 keepDays 天（含今天），更早的逐日记录删除，
+   * 累计排名按保留下来的日期重建，避免清理后仍显示已删掉的旧歌。
+   */
+  async prune(keepDays: number, now = Date.now()): Promise<PruneResult> {
+    const keep = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.floor(Number.isFinite(keepDays) ? keepDays : 30)));
+    return this.queue(async () => {
+      const data = await this.load();
+      const cutoff = localDate(now - (keep - 1) * 86_400_000);
+      const removed = data.days.filter(day => day.date < cutoff);
+      const kept = data.days.filter(day => day.date >= cutoff);
+      const removedPlays = removed.reduce((sum, day) => sum + day.plays, 0);
+      if (removed.length) {
+        const tracks = new Map<string, ListeningTrack>();
+        const artists = new Map<string, ListeningArtist>();
+        for (const day of kept) {
+          for (const track of day.tracks) {
+            const k = key(track.title, track.artist, track.album);
+            const found = tracks.get(k);
+            if (found) {
+              found.count += track.count;
+              if (track.lastAt > found.lastAt) found.lastAt = track.lastAt;
+            } else {
+              tracks.set(k, {
+                title: track.title, artist: track.artist, album: track.album,
+                count: track.count, firstAt: track.lastAt, lastAt: track.lastAt,
+              });
+            }
+          }
+          for (const artist of day.artists) {
+            const found = artists.get(norm(artist.name));
+            if (found) {
+              found.count += artist.count;
+              if (artist.lastAt > found.lastAt) found.lastAt = artist.lastAt;
+            } else {
+              artists.set(norm(artist.name), { name: artist.name, count: artist.count, lastAt: artist.lastAt });
+            }
+          }
+        }
+        data.days = kept;
+        data.totalPlays = kept.reduce((sum, day) => sum + day.plays, 0);
+        data.tracks = [...tracks.values()].sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+        data.artists = [...artists.values()].sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+        const limits = this.limitsNow();
+        this.trimTracks(data, limits.tracks, '');
+        this.trimArtists(data, limits.artists, '');
+        await this.save(data);
+      }
+      const limits = this.limitsNow();
+      return {
+        keepDays: keep, removedDays: removed.length, removedPlays,
+        keptDays: data.days.length, keptPlays: data.totalPlays,
+        keptTracks: Math.min(data.tracks.length, limits.tracks),
+        keptArtists: Math.min(data.artists.length, limits.artists),
+      };
+    });
   }
 
   /**
@@ -326,8 +540,8 @@ export class ListeningMemoryStore {
     await mkdir(this.dir, { recursive: true });
     const tmp = `${this.file}.tmp`;
     await writeFile(tmp, JSON.stringify({
-      version: 1, updatedAt: new Date().toISOString(), totalPlays: data.totalPlays,
-      tracks: data.tracks, artists: data.artists,
+      version: 2, updatedAt: new Date().toISOString(), totalPlays: data.totalPlays,
+      tracks: data.tracks, artists: data.artists, days: data.days,
     }, null, 2), 'utf8');
     await rename(tmp, this.file);
     this.data = data;
@@ -337,7 +551,7 @@ export class ListeningMemoryStore {
     const label = (data: Data | null) => {
       if (!data) return '0 首';
       const limits = this.limitsNow();
-      return `${Math.min(data.tracks.length, limits.tracks)} 首 / ${Math.min(data.artists.length, limits.artists)} 位歌手`;
+      return `${Math.min(data.tracks.length, limits.tracks)} 首 / ${Math.min(data.artists.length, limits.artists)} 位歌手 · ${data.days.length} 天`;
     };
     if (this.data) return label(this.data);
     try {
@@ -346,21 +560,22 @@ export class ListeningMemoryStore {
         totalPlays: 0,
         tracks: Array.isArray(raw?.tracks) ? raw.tracks.filter(validTrack).slice(0, ABSOLUTE_MAX_TRACKS) : [],
         artists: Array.isArray(raw?.artists) ? raw.artists.filter(validArtist).slice(0, ABSOLUTE_MAX_ARTISTS) : [],
+        days: Array.isArray(raw?.days) ? raw.days.filter(validDay) : [],
       });
     } catch { return '0 首'; }
   }
 
   async clear(): Promise<string> {
     await rm(this.file, { force: true });
-    this.data = { totalPlays: 0, tracks: [], artists: [] };
+    this.data = { totalPlays: 0, tracks: [], artists: [], days: [] };
     this.chain = Promise.resolve();
-    return '已清除听歌记忆';
+    return '已清除听歌记录（排名与历史）';
   }
 
   storage(): StoragePart {
     return {
-      key: 'listening', label: '听歌记忆', kind: 'disk', location: this.file, danger: true,
-      note: '只删除本机记录的听歌历史（歌名、歌手、专辑、次数与排名），不影响偏好画像、人格或会话。',
+      key: 'listening', label: '听歌记录（排名 + 历史）', kind: 'disk', location: this.file, danger: true,
+      note: '只删除本机的累计排名与逐日听歌历史（歌名、歌手、专辑、次数、时段与播放器），不影响听歌口味、偏好画像、人格或会话。不会按天数自动删除，可在「数据清理」页手动清理。',
       stat: () => this.stat(),
       clear: () => this.clear(),
     };

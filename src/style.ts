@@ -1,12 +1,15 @@
 import type { SongBackground } from './comments.ts';
+import type { TagFeel } from './tags.ts';
 
 export type SongStyle = 'energetic' | 'soft' | 'old' | 'odd' | 'neutral';
+export type StyleSource = 'tag' | 'inferred';
 
 /** 副歌动作建议：风格只用于选动作，不是确定曲风。 */
 export interface ChorusStyle {
   id: SongStyle;
   label: string;
-  estimated: true;
+  estimated: boolean;
+  source: StyleSource;
   actions: string[];
 }
 
@@ -47,5 +50,20 @@ export function styleOf(background: SongBackground | undefined, availableMotions
     .sort((a, b) => scores[b] - scores[a])[0];
   const id: SongStyle = scores[best] > 0 ? best : 'neutral';
   const available = new Set(availableMotions);
-  return { id, label: LABELS[id], estimated: true, actions: ACTION_PREFS[id].filter(name => available.has(name)) };
+  return { id, label: LABELS[id], estimated: true, source: 'inferred', actions: ACTION_PREFS[id].filter(name => available.has(name)) };
+}
+
+const FEEL_TO_STYLE: Record<TagFeel, SongStyle> = {
+  hard: 'energetic', soft: 'soft', old: 'old', odd: 'odd', plain: 'neutral',
+};
+
+/** 用之前标过的听感覆盖自动推断；genre 只作为提示词里的短标签。 */
+export function styleFromTag(feel: TagFeel, genre: string | undefined, availableMotions: readonly string[]): ChorusStyle {
+  const id = FEEL_TO_STYLE[feel];
+  const cleanGenre = (genre ?? '').trim();
+  const available = new Set(availableMotions);
+  return {
+    id, label: cleanGenre ? `${LABELS[id]}（${cleanGenre}）` : LABELS[id],
+    estimated: false, source: 'tag', actions: ACTION_PREFS[id].filter(name => available.has(name)),
+  };
 }

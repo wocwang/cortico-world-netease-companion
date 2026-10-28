@@ -33,5 +33,5 @@ SOFTWARE.
 - 包：https://www.npmjs.com/package/coopani-world-music
 - 作者：Mr.Q
 - 许可：MIT（仅见发布包 `package.json` 的 `license` 字段；该 tarball 未附带 LICENSE 文件）
-- 用途：动作词表探测、按播放比例分段、播放控制与搜歌的交互思路参考。
+- 用途：动作词表探测、按播放比例分段、单曲笔记、听感标签、多日历史/口味、常听曲风、切歌收尾、播放器状态提示、播放控制与搜歌的交互思路参考。
 - 说明：本项目的 `scripts/control.ps1` 针对 Windows SMTC 平台接口重写；未直接复制该包的源代码。若未来复用其代码，需要先取得其完整 MIT 版权声明与许可文本。

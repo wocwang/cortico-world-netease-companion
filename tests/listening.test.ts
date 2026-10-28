@@ -35,7 +35,7 @@ test('听歌记忆聚合曲目与歌手，并给出常听摘要和当前曲目�
     assert.equal(relation.artist?.count, 2);
     assert.equal((await store.relation({ title: '未知', artist: '未知' })).track, undefined);
     const raw = JSON.parse(await readFile(join(dir, 'listening.json'), 'utf8'));
-    assert.equal(raw.version, 1);
+    assert.equal(raw.version, 2);
     assert.equal(raw.totalPlays, 3);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -167,6 +167,44 @@ test('听歌记忆支持一次累加多次循环', async () => {
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('按保留天数清理旧记录，并重建累计排名', async () => {
+  const dir = await temp();
+  try {
+    const store = new ListeningMemoryStore(dir);
+    const now = Date.now();
+    await store.record({ title: '旧歌', artist: '旧歌手', album: '' }, now - 4000 * 86_400_000);
+    await store.record({ title: '旧歌', artist: '旧歌手', album: '' }, now - 40 * 86_400_000);
+    await store.record({ title: '旧歌', artist: '旧歌手', album: '' }, now - 40 * 86_400_000 + 1000);
+    await store.record({ title: '新歌', artist: '新歌手', album: '' }, now - 2 * 86_400_000);
+    const all = await store.history(36_500);
+    assert.equal(all.days.length, 3);
+    const preview = await store.prunePreview(30, now);
+    assert.equal(preview.removedDays, 2);
+    assert.equal(preview.removedPlays, 3);
+    assert.equal(preview.keptDays, 1);
+    assert.equal(preview.keptPlays, 1);
+    assert.equal((await store.history(36_500)).days.length, 3);
+    const result = await store.prune(30, now);
+    assert.equal(result.keepDays, 30);
+    assert.equal(result.removedDays, 2);
+    assert.equal(result.removedPlays, 3);
+    assert.equal(result.keptDays, 1);
+    assert.equal(result.keptPlays, 1);
+    assert.equal(result.keptTracks, 1);
+    assert.equal(result.keptArtists, 1);
+    const view = await store.view();
+    assert.equal(view.totalPlays, 1);
+    assert.deepEqual(view.topTracks.map(t => t.title), ['新歌']);
+    assert.deepEqual(view.topArtists.map(a => a.name), ['新歌手']);
+    const again = await store.prune(30, now);
+    assert.equal(again.removedDays, 0);
+    assert.equal(again.keptDays, 1);
+    assert.match(String(store.storage().note), /不会按天数自动删除/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('听歌记忆可持久化并单独清除', async () => {
   const dir = await temp();
   try {
@@ -176,7 +214,7 @@ test('听歌记忆可持久化并单独清除', async () => {
     assert.equal((await reloaded.view()).totalPlays, 1);
     assert.match(reloaded.storage().stat(), /1 首/);
     assert.equal(reloaded.storage().location, join(dir, 'listening.json'));
-    assert.equal(await reloaded.storage().clear(), '已清除听歌记忆');
+    assert.equal(await reloaded.storage().clear(), '已清除听歌记录（排名与历史）');
     assert.equal((await reloaded.view()).totalPlays, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });

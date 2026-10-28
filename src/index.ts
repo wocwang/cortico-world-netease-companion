@@ -26,6 +26,10 @@ const definition: WorldDefinition<MusicConfig> = {
       music_artist_context: { zh: '读取当前歌手简介、别名、代表作品、专辑与第三方背景摘录（需开启歌手资料开关）。', en: 'Read the current artist profile, works, albums and labeled background excerpts when the artist context switch is on.' },
       music_control: { zh: '仅在用户明确要求时暂停、继续、切上一首或下一首；需在设置中允许播放控制。', en: 'Pause, resume, skip previous/next only when explicitly asked, and only when playback control is allowed.' },
       music_pick: { zh: '搜索网易云与 QQ 音乐曲库并挑一首，返回曲目与链接；不能自动播放。', en: 'Search NetEase and QQ Music, pick a track, and return a link; playback cannot be started by the World.' },
+      music_note: { zh: '把用户明确说过的一句歌曲笔记写入本插件独立的笔记文件，以后再听到时可以参考。', en: 'Save one explicit user note about the current song in this plugin\'s own notes file.' },
+      music_tag: { zh: '给当前曲目标一个听感标签（烈/柔/旧/怪/淡）和可选曲风，后续分段沿用。', en: 'Tag the current track\'s feel and optional genre for later passages.' },
+      music_history: { zh: '读取本机最近几天的逐日听歌记录：播放次数、曲目、歌手、时段与播放器。', en: 'Read the local per-day listening log for the last days.' },
+      music_taste: { zh: '读取较长时间窗口的听歌口味摘要：常听歌手、循环曲、时段与播放器占比。', en: 'Read a longer-window local taste summary.' },
       music_set_commentary: { zh: '保存切歌评论开关。', en: 'Persist the music commentary preference.' },
       music_comment_preference: { zh: '记录用户明确表达过的评论口味与主动互动频率，写入本插件独立的画像文件。', en: 'Record an explicit comment-style preference or interaction cadence in this plugin\'s own profile file.' },
     }),
@@ -35,6 +39,9 @@ const definition: WorldDefinition<MusicConfig> = {
     } }, { type: 'netease-music.comment_requested', description: {
       zh: '曲目与评论外部数据入队后，内部机制请求桌宠检查当前曲目并主动发言。',
       en: 'An internal mechanism cue to check current music and speak after external metadata is queued.',
+    } }, { type: 'netease-music.state_requested', description: {
+      zh: '播放器暂停、恢复或结束时，请求桌宠用一句很短的话回应；不带外部资料。',
+      en: 'A short cue when playback pauses, resumes or ends; no external data is attached.',
     } }],
   },
 };
