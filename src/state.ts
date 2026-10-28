@@ -5,8 +5,12 @@ export interface Track {
   artist: string;
   album: string;
   app: string;
+  /** 官方播放器 id；窗口标题兜底时也能标出来源。 */
+  player?: string;
   status: 'playing' | 'paused' | 'unknown';
   method: 'smtc' | 'window-title';
+  /** 播放器是否提供了播放位置/时长；false 表示分段只能按时间估算。 */
+  timeline?: boolean;
   positionSeconds?: number;
   durationSeconds?: number;
 }
@@ -21,8 +25,10 @@ export function parseSnapshot(input: unknown): Snapshot {
   const title = clean(t.title);
   if (!title || !['smtc', 'window-title'].includes(String(t.method))) throw new Error('Invalid track');
   return { track: { title, artist: clean(t.artist), album: clean(t.album), app: clean(t.app),
+    ...(typeof t.player === 'string' && t.player ? { player: clean(t.player) } : {}),
     status: t.status === 'playing' || t.status === 'paused' ? t.status : 'unknown',
     method: t.method as Track['method'],
+    ...(typeof t.timeline === 'boolean' ? { timeline: t.timeline } : {}),
     ...(typeof t.positionSeconds === 'number' && Number.isFinite(t.positionSeconds) && t.positionSeconds >= 0
       ? { positionSeconds: t.positionSeconds } : {}),
     ...(typeof t.durationSeconds === 'number' && Number.isFinite(t.durationSeconds) && t.durationSeconds > 0

@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MusicWorld } from '../src/world.ts';
-import { configGroups, defaults } from '../src/config.ts';
+import { configGroups, defaults, matchPlayer, PLAYERS, playerOrder } from '../src/config.ts';
 import { parseSnapshot } from '../src/state.ts';
 
 test('webUi 提供实时状态面板与快照', async () => {
@@ -64,6 +64,9 @@ test('webUi 提供实时状态面板与快照', async () => {
   );
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
+  assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback']);
+  assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
+  assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify');
   await assert.rejects(web.invoke!('live-status', 'other', []), /未知的状态请求/);
   await assert.rejects(web.invoke!('connection-check', 'other', []), /未知的连接检查请求/);
   await assert.rejects(web.invoke!('settings', 'other', []), /未知的设置请求/);
@@ -78,7 +81,7 @@ test('设置面板直接持久化配置并校验范围', async () => {
     cooldownSeconds: 45, lyricsLines: 20.9, windowFallback: false,
     announceTracks: false, segmentComments: true, segmentCount: 3, segmentEverySeconds: 0,
     actionHints: false, allowPlaybackControl: true, stateComments: false,
-    sessionPattern: 'cloudmusic|QQMusic', unknown: 1,
+    playerPriority: ['spotify', 'netease', 'spotify', 'unknown'], unknown: 1,
   }]);
   assert.equal(cfg.cooldownSeconds, 45);
   assert.equal(cfg.lyricsLines, 20);
@@ -90,10 +93,10 @@ test('设置面板直接持久化配置并校验范围', async () => {
   assert.equal(cfg.actionHints, false);
   assert.equal(cfg.allowPlaybackControl, true);
   assert.equal(cfg.stateComments, false);
-  assert.equal(cfg.sessionPattern, 'cloudmusic|QQMusic');
+  assert.deepEqual(cfg.playerPriority, ['spotify', 'netease', 'qq', 'kugou', 'kuwo']);
   assert.equal((cfg as any).unknown, undefined);
   await assert.rejects(web.invoke!('settings', 'save', [{ cooldownSeconds: 5 }]), /不能小于/);
-  await assert.rejects(web.invoke!('settings', 'save', [{ sessionPattern: '(' }]), /正则表达式无效/);
+  await assert.rejects(web.invoke!('settings', 'save', [{ playerPriority: 'netease' }]), /不是有效列表/);
   await assert.rejects(web.invoke!('settings', 'save', [null]), /设置参数无效/);
 });
 
@@ -227,16 +230,36 @@ test('新增播放控制与搜歌工具，默认不执行控制', async () => {
   assert.equal(typeof vars['music.actionVocab'], 'string');
 });
 
-test('解析媒体快照时保留播放位置与曲目时长', () => {
+test('解析媒体快照时保留播放位置、曲目时长与播放器能力', () => {
   const snap = parseSnapshot({ track: {
-    title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic',
+    title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic', player: 'netease', timeline: true,
     status: 'playing', method: 'smtc', positionSeconds: 12, durationSeconds: 269,
   } });
   assert.equal(snap.track?.positionSeconds, 12);
   assert.equal(snap.track?.durationSeconds, 269);
+  assert.equal(snap.track?.player, 'netease');
+  assert.equal(snap.track?.timeline, true);
+  const fallback = parseSnapshot({ track: {
+    title: '晴天 - 周杰伦', artist: '', album: '', app: 'KuGou', player: 'kugou', timeline: false,
+    status: 'unknown', method: 'window-title',
+  } });
+  assert.equal(fallback.track?.timeline, false);
+  assert.equal(fallback.track?.player, 'kugou');
 });
 
-test('配置分组明确支持网易云与 QQ 音乐，功能标签不带平台名', () => {
+test('官方播放器清单、优先级归一化与匹配', () => {
+  assert.deepEqual(PLAYERS.map(player => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
+  assert.deepEqual(playerOrder(undefined), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
+  assert.deepEqual(playerOrder(['spotify', 'qq', 'spotify', 'unknown']), ['spotify', 'qq', 'netease', 'kugou', 'kuwo']);
+  assert.equal(matchPlayer('Spotify.exe')?.id, 'spotify');
+  assert.equal(matchPlayer('SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify')?.id, 'spotify');
+  assert.equal(matchPlayer('KuGou.exe')?.id, 'kugou');
+  assert.equal(matchPlayer('KwMusic.exe')?.id, 'kuwo');
+  assert.equal(matchPlayer('QQMusic.exe')?.id, 'qq');
+  assert.equal(matchPlayer('chrome.exe'), null);
+});
+
+test('配置分组只暴露官方播放器优先级，功能标签不带平台名', () => {
   assert.equal(new Set(configGroups.map(group => group.id)).size, configGroups.length);
   assert.ok(configGroups.length >= 5);
   for (const group of configGroups) {
@@ -245,12 +268,14 @@ test('配置分组明确支持网易云与 QQ 音乐，功能标签不带平台�
     assert.ok(group.schema.description);
   }
   const descriptions = configGroups.map(group => group.schema.description).join(' ');
-  assert.match(descriptions, /网易云音乐与 QQ 音乐/);
+  assert.match(descriptions, /官方支持的音乐软件/);
   const props = Object.assign({}, ...configGroups.map(group => group.schema.properties)) as any;
   assert.equal(props['worlds.netease-music.commentReference'].title, '参考评论区（联网）');
   assert.doesNotMatch(props['worlds.netease-music.commentReference'].title, /网易云/);
   assert.doesNotMatch(props['worlds.netease-music.artistContext'].description, /网易云/);
   assert.doesNotMatch(props['worlds.netease-music.songContext'].description, /网易云/);
-  assert.match(props['worlds.netease-music.sessionPattern'].title, /网易云音乐 \/ QQ 音乐/);
-  assert.equal(props['worlds.netease-music.sessionPattern']['x-hot'], false);
+  assert.equal(props['worlds.netease-music.playerPriority'].type, 'array');
+  assert.equal(props['worlds.netease-music.playerPriority']['x-hot'], false);
+  assert.equal(props['worlds.netease-music.sessionPattern'], undefined);
+  assert.equal(props['worlds.netease-music.windowFallbackProcess'], undefined);
 });

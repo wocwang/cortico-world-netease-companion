@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
+import { matchPlayer } from './config.ts';
 import type { CumulativeListening, ListeningHistory } from './listening.ts';
 
 export interface TasteProfile {
@@ -29,12 +30,8 @@ const MAX_DAYS = 3650;
 const clean = (value: unknown, max: number) =>
   typeof value === 'string' ? value.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
 
-const playerLabel = (app: string): string => {
-  const lower = app.toLowerCase();
-  if (lower.includes('cloudmusic') || lower.includes('netease')) return '网易云音乐';
-  if (lower.includes('qqmusic')) return 'QQ 音乐';
-  return app || '未知播放器';
-};
+/** 播放器占比沿用官方清单命名；未知进程仍保留原始名字。 */
+const playerLabel = (app: string): string => matchPlayer(app)?.label ?? (app || '未知播放器');
 
 /** 只从行为数据生成，不做人格判断。没有逐日记录时用累计排名兜底，时段与播放器留空。 */
 export function buildTaste(history: ListeningHistory, windowDays: number, now = Date.now(),

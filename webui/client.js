@@ -21,7 +21,9 @@ export default {
           outOfRange: (title, min, max) => zh
             ? `「${title}」需在 ${min}–${max} 之间，未保存`
             : `"${title}" must be between ${min} and ${max}; not saved`,
-          invalidRegex: zh ? '正则表达式无效，未保存' : 'Invalid regular expression; not saved',
+          moveUp: zh ? '上移' : 'Up',
+          moveDown: zh ? '下移' : 'Down',
+          noTimeline: zh ? '无进度' : 'No timeline',
           saveFailed: msg => zh ? `保存失败：${msg}` : `Save failed: ${msg}`,
           loadFailed: msg => zh ? `读取配置失败：${msg}` : `Could not read settings: ${msg}`,
         };
@@ -62,10 +64,19 @@ export default {
               return zh
                 ? `收录 ${get('listeningTrackLimit') ?? '—'} 首 / ${get('listeningArtistLimit') ?? '—'} 位 · 显示 ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`
                 : `Store ${get('listeningTrackLimit') ?? '—'} / ${get('listeningArtistLimit') ?? '—'} · show ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`;
-            case 'reader':
+            case 'reader': {
+              const stored = get('playerPriority');
+              const order = Array.isArray(stored) && stored.length
+                ? stored
+                : (group.players || []).map(player => player.id);
+              const names = order.map(id => {
+                const player = (group.players || []).find(item => item.id === id);
+                return player ? (zh ? player.label : player.labelEn) : id;
+              });
               return zh
-                ? `窗口降级 ${onOff(get('windowFallback'))} · SMTC 正则 ${get('sessionPattern') ? '已设置' : '—'}`
-                : `Window fallback ${onOff(get('windowFallback'))} · SMTC pattern ${get('sessionPattern') ? 'set' : '—'}`;
+                ? `优先级 ${names.join(' > ') || '—'} · 窗口降级 ${onOff(get('windowFallback'))}`
+                : `Priority ${names.join(' > ') || '—'} · window fallback ${onOff(get('windowFallback'))}`;
+            }
             default:
               return `${group.fields.length} ${zh ? '项' : 'fields'}`;
           }
@@ -107,11 +118,6 @@ export default {
                 return;
               }
             }
-            if ((reader.key === 'sessionPattern' || reader.key === 'windowFallbackProcess')
-              && typeof value === 'string') {
-              try { new RegExp(value); }
-              catch { invalid(text.invalidRegex); return; }
-            }
             values[reader.key] = value;
           }
           try {
@@ -129,6 +135,40 @@ export default {
 
         const control = (group, field) => {
           const changed = () => queueSave(group);
+          if (field.key === 'playerPriority') {
+            // 只读条目 + 上移/下移：不提供输入框，也不能增删官方清单之外的播放器。
+            const players = Array.isArray(group.players) ? group.players : [];
+            const nameOf = id => {
+              const player = players.find(item => item.id === id);
+              return player ? (zh ? player.label : player.labelEn) : id;
+            };
+            let order = Array.isArray(field.value) ? field.value.slice() : players.map(player => player.id);
+            const node = ui.h('div');
+            const move = (index, delta) => {
+              const target = index + delta;
+              if (target < 0 || target >= order.length) return;
+              [order[index], order[target]] = [order[target], order[index]];
+              render();
+              changed();
+            };
+            const render = () => {
+              node.replaceChildren();
+              order.forEach((id, index) => {
+                const row = ui.rowbar();
+                const player = players.find(item => item.id === id);
+                row.append(ui.pill(String(index + 1), 'plain'), ui.h('span', 'grow'), ui.h('span', '', nameOf(id)));
+                if (player && !player.timeline) row.append(ui.pill(text.noTimeline, 'plain'));
+                const up = ui.button(text.moveUp, { size: 'sm', onClick: () => move(index, -1) });
+                const down = ui.button(text.moveDown, { size: 'sm', onClick: () => move(index, 1) });
+                up.disabled = index === 0;
+                down.disabled = index === order.length - 1;
+                row.append(up, down);
+                node.appendChild(row);
+              });
+            };
+            render();
+            return { node, read: () => order.slice() };
+          }
           if (field.type === 'boolean') {
             const box = ui.checkbox(text.on, { checked: field.value === true, onChange: changed });
             return { node: box.el, read: () => box.checked };
@@ -157,7 +197,6 @@ export default {
             const input = ui.input({
               type: 'text',
               value: field.value == null ? '' : String(field.value),
-              cls: field.key === 'sessionPattern' || field.key === 'windowFallbackProcess' ? 'mono' : undefined,
               onChange: changed,
             });
             return { node: input, read: () => input.value };
@@ -223,8 +262,10 @@ export default {
           stopped: zh ? '未运行' : 'Not running',
           connected: zh ? 'SMTC 已连接' : 'SMTC connected',
           disconnected: zh ? '未检测到 SMTC' : 'No SMTC session',
+          supported: zh ? '官方支持' : 'Supported',
+          unsupported: zh ? '未支持' : 'Unsupported',
           sessions: zh ? '当前 SMTC 会话' : 'SMTC sessions',
-          sessionsDesc: zh ? 'Windows 当前暴露的媒体会话，未匹配到音乐软件时也会列在这里' : 'Media sessions Windows currently exposes, including apps outside the music filter',
+          sessionsDesc: zh ? 'Windows 当前暴露的媒体会话，未匹配到官方播放器时也会列在这里' : 'Media sessions Windows currently exposes, including apps outside the official players',
           empty: zh ? '当前没有可用的 SMTC 会话' : 'No SMTC session available',
           checked: time => zh ? `检测于 ${time}，仅读取本机进程、安装信息与 SMTC 会话。` : `Checked ${time}; local processes, installs and SMTC sessions only.`,
           failed: msg => zh ? `检测失败：${msg}` : `Check failed: ${msg}`,
@@ -240,7 +281,7 @@ export default {
         const summary = ui.h('div');
         const appsHost = ui.h('div');
         const sessions = ui.table({
-          head: zh ? ['应用', '状态', '曲目', '歌手'] : ['App', 'State', 'Track', 'Artist'],
+          head: zh ? ['应用', '状态', '曲目', '歌手', '支持'] : ['App', 'State', 'Track', 'Artist', 'Support'],
           maxHeight: '28vh',
         });
         const sessionSection = ui.section(text.sessions, text.sessionsDesc);
@@ -250,11 +291,8 @@ export default {
 
         let state = { apps: [], sessions: [], error: '' };
 
-        const appName = app => app.id === 'netease' ? (zh ? '网易云音乐' : 'NetEase Cloud Music') : (zh ? 'QQ 音乐' : 'QQ Music');
-        const hasSession = app => {
-          const pattern = app.id === 'netease' ? /cloudmusic|netease/i : /qqmusic/i;
-          return (state.sessions || []).some(session => pattern.test(String(session.app || '')));
-        };
+        const appName = app => (zh ? app.label : app.labelEn) || app.name || app.id;
+        const hasSession = app => (state.sessions || []).some(session => session.player === app.id);
         const stateLabel = value => {
           const name = String(value || '').toLowerCase();
           if (name === 'playing') return zh ? '播放中' : 'Playing';
@@ -266,7 +304,7 @@ export default {
           if (!app.installed) return text.notInstalled;
           if (!app.running) return text.notRunning;
           if (hasSession(app)) return text.connectedHint;
-          return app.id === 'qqmusic' ? text.qqHint : text.neteaseHint;
+          return (zh ? app.note : app.noteEn) || text.neteaseHint;
         };
 
         const draw = data => {
@@ -292,12 +330,15 @@ export default {
             );
             sheet.body.appendChild(pills);
             if (app.path) sheet.body.appendChild(ui.h('div', 'tdesc', String(app.path)));
+            const capability = zh ? app.note : app.noteEn;
+            if (capability) sheet.body.appendChild(ui.h('div', 'tdesc', capability));
             sheet.body.appendChild(ui.h('div', 'tdesc', hint(app)));
             appsHost.appendChild(sheet.el);
           }
           sessions.clear(state.sessions.length ? '' : text.empty);
           for (const session of state.sessions) {
-            sessions.addRow([session.app || '-', stateLabel(session.status), session.title || '-', session.artist || '-']);
+            sessions.addRow([session.app || '-', stateLabel(session.status), session.title || '-', session.artist || '-',
+              session.supported ? text.supported : text.unsupported]);
           }
           if (state.error) {
             status.classList.add('bad');

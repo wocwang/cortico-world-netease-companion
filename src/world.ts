@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { StoragePart, ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
-import { configGroups, commentLimits, lyricLimits, listeningLimits, normalizeConfigPatch, segmentLimits, type MusicConfig } from './config.ts';
+import { configGroups, commentLimits, lyricLimits, listeningLimits, matchPlayer, normalizeConfigPatch, PLAYERS, segmentLimits, type MusicConfig } from './config.ts';
 import { WindowsReader, type Reader } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
@@ -183,8 +183,12 @@ export class MusicWorld implements World {
     };
   }
   private readingLabel(): string {
-    return this.error || (!this.state.current ? '等待音乐播放器（未打开或无曲目）' :
-      Date.now() - this.state.observedAt > 10_000 ? '信息过期，等待重连' : this.state.current.status === 'paused' ? '已暂停' : this.state.current.method);
+    if (this.error) return this.error;
+    const current = this.state.current;
+    if (!current) return '等待音乐播放器（未打开或无曲目）';
+    if (Date.now() - this.state.observedAt > 10_000) return '信息过期，等待重连';
+    if (current.status === 'paused') return '已暂停';
+    return current.timeline === false ? `${current.method} · 无进度` : current.method;
   }
   private async genreMap(): Promise<Map<string, string[]>> {
     const map = new Map<string, string[]>();
@@ -297,20 +301,27 @@ export class MusicWorld implements World {
     const cfg = this.cfg as unknown as Record<string, unknown>;
     const prefix = 'worlds.netease-music.';
     return {
-      groups: configGroups.map(group => ({
-        id: group.id,
-        kind: group.id.slice(group.id.lastIndexOf(':') + 1),
-        title: group.schema.title,
-        description: group.schema.description ?? '',
-        fields: Object.entries(group.schema.properties).map(([path, prop]) => {
-          const key = path.slice(prefix.length);
-          return {
-            key, title: prop.title, description: prop.description ?? '', type: prop.type,
-            minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
-            value: cfg[key] ?? null,
-          };
-        }),
-      })),
+      groups: configGroups.map(group => {
+        const kind = group.id.slice(group.id.lastIndexOf(':') + 1);
+        return {
+          id: group.id,
+          kind,
+          title: group.schema.title,
+          description: group.schema.description ?? '',
+          ...(kind === 'reader' ? { players: PLAYERS.map(player => ({
+            id: player.id, label: player.label, labelEn: player.labelEn,
+            note: player.note, noteEn: player.noteEn, timeline: player.timeline,
+          })) } : {}),
+          fields: Object.entries(group.schema.properties).map(([path, prop]) => {
+            const key = path.slice(prefix.length);
+            return {
+              key, title: prop.title, description: prop.description ?? '', type: prop.type,
+              minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
+              value: cfg[key] ?? null,
+            };
+          }),
+        };
+      }),
     };
   }
   /** 「连接检查」只读本机进程、卸载表与 SMTC 会话，不修改任何第三方配置。 */
@@ -320,7 +331,28 @@ export class MusicWorld implements World {
         '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('../scripts/smtc-status.ps1', import.meta.url))],
       { windowsHide: true, timeout: 15_000, maxBuffer: 512 * 1024, encoding: 'utf8' });
       const text = stdout.trim();
-      return text ? JSON.parse(text) : { apps: [], sessions: [], error: '没有返回检测结果' };
+      if (!text) return { apps: [], sessions: [], error: '没有返回检测结果' };
+      const parsed = JSON.parse(text) as { apps?: unknown[]; sessions?: unknown[]; error?: unknown };
+      // Only the official list may claim support; other sessions stay visible but marked unsupported.
+      const sessions = (Array.isArray(parsed.sessions) ? parsed.sessions : []).map(item => {
+        const session = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+        const player = matchPlayer(String(session.app ?? ''));
+        return { ...session, player: player?.id ?? null, supported: player !== null, label: player?.label ?? '' };
+      });
+      const apps = (Array.isArray(parsed.apps) ? parsed.apps : []).map(item => {
+        const app = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+        const player = PLAYERS.find(entry => entry.id === app.id);
+        return {
+          ...app,
+          label: player?.label ?? String(app.name ?? app.id ?? ''),
+          labelEn: player?.labelEn ?? String(app.name ?? app.id ?? ''),
+          note: player?.note ?? '',
+          noteEn: player?.noteEn ?? '',
+          timeline: player?.timeline ?? false,
+          supported: player !== undefined,
+        };
+      });
+      return { apps, sessions, error: parsed.error ? String(parsed.error) : '' };
     } catch (error) {
       return { apps: [], sessions: [], error: error instanceof Error ? error.message : String(error) };
     }

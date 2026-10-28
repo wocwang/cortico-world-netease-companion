@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import type { MusicConfig } from './config.ts';
+import { playerEnv, type MusicConfig } from './config.ts';
 import { parseSnapshot, type Snapshot } from './state.ts';
 
 export interface Reader { start(onSnapshot: (s: Snapshot) => void, onError: (message: string) => void): void; stop(): Promise<void> }
@@ -25,8 +25,7 @@ export class WindowsReader implements Reader {
       const child = this.child = this.launchProcess('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive',
         '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('../scripts/media-session.ps1', import.meta.url))], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, MUSIC_SESSION_PATTERN: this.cfg.sessionPattern,
-          MUSIC_WINDOW_PROCESS: this.cfg.windowFallbackProcess || 'cloudmusic|QQMusic|qqmusic',
+        env: { ...process.env, MUSIC_PLAYER_ORDER: playerEnv(this.cfg.playerPriority),
           MUSIC_WINDOW_FALLBACK: this.cfg.windowFallback ? '1' : '0' },
       });
       let lineBytes = 0;

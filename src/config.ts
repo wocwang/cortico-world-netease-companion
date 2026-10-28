@@ -5,9 +5,8 @@ export interface MusicConfig {
   commentary: boolean;
   settleSeconds: number;
   cooldownSeconds: number;
-  sessionPattern: string;
+  playerPriority: string[];
   windowFallback: boolean;
-  windowFallbackProcess: string;
   commentReference: boolean;
   maxCommentChars: number;
   commentExcerpts: number;
@@ -28,10 +27,67 @@ export interface MusicConfig {
   listeningRankTrackRange: number;
   listeningRankArtistRange: number;
 }
+export interface PlayerDef {
+  id: string;
+  label: string;
+  labelEn: string;
+  /** 匹配 Windows SMTC 的 SourceAppUserModelId。 */
+  session: string;
+  /** 窗口标题降级时匹配的进程名。 */
+  window: string;
+  /** 播放器是否提供播放位置与时长；没有时分段陪听只能按已播放时间估算。 */
+  timeline: boolean;
+  note: string;
+  noteEn: string;
+}
+/** 官方支持的音乐软件；顺序即默认读取优先级，也是设置页唯一允许的条目集合。 */
+export const PLAYERS: readonly PlayerDef[] = [
+  { id: 'netease', label: '网易云音乐', labelEn: 'NetEase Cloud Music', session: 'cloudmusic|netease',
+    window: 'cloudmusic|netease', timeline: true,
+    note: 'SMTC 提供曲目、状态与播放进度；网易云数据匹配最好。',
+    noteEn: 'SMTC exposes track, state and progress; NetEase data matches best.' },
+  { id: 'qq', label: 'QQ 音乐', labelEn: 'QQ Music', session: 'qqmusic', window: 'qqmusic', timeline: true,
+    note: '较新版本提供完整 SMTC；需在「设置 → 常规设置 → 通知」开启「显示系统媒体传输控件（SMTC）」后重启客户端。',
+    noteEn: 'Recent versions expose full SMTC; enable system media controls in Settings → General → Notifications and restart the client.' },
+  { id: 'kugou', label: '酷狗音乐', labelEn: 'Kugou Music', session: 'kugou', window: 'kugou', timeline: false,
+    note: '提供 SMTC，但通常没有播放进度与时长；分段陪听按已播放时间估算，暂停时计时可能偏差。',
+    noteEn: 'Exposes SMTC but usually no position or duration; segments fall back to elapsed wall time and may drift while paused.' },
+  { id: 'kuwo', label: '酷我音乐', labelEn: 'Kuwo Music', session: 'kuwo|kwmusic', window: 'kwmusic|kuwo', timeline: false,
+    note: '媒体会话不稳定，通常退回窗口标题读取，只能取「歌名 - 歌手」；无法确认暂停与播放进度。',
+    noteEn: 'Media sessions are unreliable, so it usually falls back to the window title, which only yields "title - artist" and cannot confirm pause or progress.' },
+  { id: 'spotify', label: 'Spotify', labelEn: 'Spotify', session: 'spotify', window: 'spotify', timeline: true,
+    note: '通常提供完整 SMTC；评论与歌词仍按中文曲库匹配，未匹配时只做普通陪听。',
+    noteEn: 'Usually exposes full SMTC; comments and lyrics still match Chinese catalogues and fall back to plain companionship when unmatched.' },
+];
+const PLAYER_IDS = new Set(PLAYERS.map(player => player.id));
+/** 只保留官方播放器；去重、保持用户顺序，并把缺失项按清单顺序补到末尾。 */
+export function playerOrder(value: unknown): string[] {
+  const ids = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const id of ids) {
+    if (PLAYER_IDS.has(id) && !seen.has(id)) { seen.add(id); ordered.push(id); }
+  }
+  for (const player of PLAYERS) if (!seen.has(player.id)) ordered.push(player.id);
+  return ordered;
+}
+/** 把 SMTC 应用名解析成官方播放器；不认识的应用返回 null。 */
+export function matchPlayer(appId: string): PlayerDef | null {
+  const value = String(appId ?? '');
+  for (const player of PLAYERS) if (new RegExp(player.session, 'i').test(value)) return player;
+  return null;
+}
+/** 读取脚本的环境变量：按顺序交给 PowerShell，由它决定会话优先级。 */
+export function playerEnv(priority: string[]): string {
+  return JSON.stringify(playerOrder(priority).map(id => {
+    const player = PLAYERS.find(item => item.id === id)!;
+    return { id: player.id, session: player.session, window: player.window };
+  }));
+}
 export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
-  sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic', windowFallback: true,
-  windowFallbackProcess: 'cloudmusic|QQMusic|qqmusic', commentReference: true, maxCommentChars: 80,
+  playerPriority: PLAYERS.map(player => player.id), windowFallback: true,
+  commentReference: true, maxCommentChars: 80,
   commentExcerpts: 10, announceTracks: true, segmentComments: false, segmentCount: 2, segmentEverySeconds: 60,
   actionHints: true, allowPlaybackControl: false, stateComments: true,
   artistContext: true, songContext: true,
@@ -71,7 +127,7 @@ const owner = 'world:netease-music' as const;
 export const configGroups: ConfigGroup[] = [
   {
     id: 'world:netease-music:commentary', owner, schema: {
-      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐与 QQ 音乐；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，QQ 音乐独家内容可能无法匹配；搜歌会同时查询网易云与 QQ 音乐。',
+      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐、QQ 音乐、酷狗音乐、酷我音乐与 Spotify；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，其他平台独家内容可能无法匹配；搜歌会同时查询网易云与 QQ 音乐。',
       properties: {
         'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
         'worlds.netease-music.announceTracks': { type: 'boolean', title: '切歌报幕', description: '新歌稳定后先用半句自然报出歌名/歌手，再说感受；信息缺失或不确定时不硬报。', 'x-hot': true },
@@ -121,11 +177,10 @@ export const configGroups: ConfigGroup[] = [
   },
   {
     id: 'world:netease-music:reader', owner, schema: {
-      type: 'object', title: '媒体读取', description: '修改后需重启 World；这些配置只影响读取通道，不匹配歌曲内容。',
+      type: 'object', title: '媒体读取', description: '只列出官方支持的音乐软件；顺序靠前优先读取，不能添加其他软件。修改后需重启 World。',
       properties: {
-        'worlds.netease-music.sessionPattern': { type: 'string', title: '媒体会话应用名匹配（网易云音乐 / QQ 音乐，重启生效）', description: '目前支持网易云音乐与 QQ 音乐。匹配 Windows SMTC 的应用名；其他播放器可自行加入，修改后重启 World。', 'x-hot': false },
-        'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', 'x-hot': false },
-        'worlds.netease-music.windowFallbackProcess': { type: 'string', title: '窗口标题降级的进程名匹配（正则，重启生效）', description: '默认 cloudmusic|QQMusic|qqmusic。仅在 SMTC 不可用时读取这些进程的窗口标题；修改后重启 World。', 'x-hot': false },
+        'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '只包含官方支持的音乐软件。用上移/下移调整顺序，靠前的播放器优先读取；不能增删或自行添加其他软件。修改后重启 World。', 'x-hot': false },
+        'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
       },
     },
   },
@@ -145,11 +200,12 @@ export function normalizeConfigPatch(values: Record<string, unknown>): Partial<M
     if (!prop) continue;
     if (prop.type === 'boolean') { patch[key] = raw === true; continue; }
     if (prop.type === 'string') {
-      const text = String(raw ?? '');
-      if (key === 'sessionPattern' || key === 'windowFallbackProcess') {
-        try { new RegExp(text); } catch { throw new Error('正则表达式无效'); }
-      }
-      patch[key] = text;
+      patch[key] = String(raw ?? '');
+      continue;
+    }
+    if (prop.type === 'array') {
+      if (!Array.isArray(raw)) throw new Error(`「${prop.title}」不是有效列表`);
+      patch[key] = playerOrder(raw);
       continue;
     }
     if (prop.type === 'integer' || prop.type === 'number') {

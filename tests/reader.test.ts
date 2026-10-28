@@ -17,40 +17,34 @@ class FakeChild extends EventEmitter {
   }
 }
 
-test('读取器把媒体会话与窗口降级进程配置传给 PowerShell', async () => {
+test('读取器按优先级把官方播放器清单传给 PowerShell', async () => {
   let captured: any;
   const child = new FakeChild();
   const fakeSpawn = ((cmd: string, args: string[], opts: any) => {
     captured = { cmd, args, opts };
     return child;
   }) as any;
-  const cfg = { ...defaults(), sessionPattern: 'QQMusic|cloudmusic', windowFallbackProcess: 'QQMusic|cloudmusic' };
+  const cfg = { ...defaults(), playerPriority: ['qq', 'netease'], windowFallback: true };
   const reader = new WindowsReader(cfg, fakeSpawn, { heartbeatMs: 999999, checkMs: 999999, retryMs: 999999 });
   reader.start(() => {}, () => {});
   assert.equal(captured.cmd, 'powershell.exe');
   assert.match(captured.args.join(' '), /media-session\.ps1/);
-  assert.equal(captured.opts.env.MUSIC_SESSION_PATTERN, 'QQMusic|cloudmusic');
-  assert.equal(captured.opts.env.MUSIC_WINDOW_PROCESS, 'QQMusic|cloudmusic');
+  const players = JSON.parse(captured.opts.env.MUSIC_PLAYER_ORDER);
+  assert.deepEqual(players.map((item: any) => item.id), ['qq', 'netease', 'kugou', 'kuwo', 'spotify']);
+  assert.ok(players.every((item: any) => item.session && item.window));
   assert.equal(captured.opts.env.MUSIC_WINDOW_FALLBACK, '1');
+  assert.equal(captured.opts.env.MUSIC_SESSION_PATTERN, undefined);
   await reader.stop();
 });
 
-test('preflight 迁移旧默认并校验窗口进程正则', () => {
+test('preflight 归一化播放器优先级并补齐官方项', () => {
   const patches: any[] = [];
-  const oldCfg = { ...defaults(), sessionPattern: 'cloudmusic|netease|网易云', windowFallbackProcess: '' };
-  definition.preflight!({ cfg: oldCfg, persist: (patch: any) => patches.push(patch) } as any);
-  assert.deepEqual(patches[0], { sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic' });
-  assert.deepEqual(patches[1], { windowFallbackProcess: 'cloudmusic|QQMusic|qqmusic' });
-  const explicit: any[] = [];
   definition.preflight!({
-    cfg: { ...defaults(), sessionPattern: 'cloudmusic|netease|网易云', windowFallbackProcess: 'cloudmusic' },
-    persist: (patch: any) => explicit.push(patch),
+    cfg: { ...defaults(), playerPriority: ['spotify', 'unknown', 'spotify'] },
+    persist: (patch: any) => patches.push(patch),
   } as any);
-  assert.deepEqual(explicit, [{ sessionPattern: 'cloudmusic|netease|网易云|QQMusic|qqmusic' }]);
-  assert.throws(() => definition.preflight!({
-    cfg: { ...defaults(), sessionPattern: '[' }, persist: () => {},
-  } as any), /媒体会话应用名匹配/);
-  assert.throws(() => definition.preflight!({
-    cfg: { ...defaults(), windowFallbackProcess: '[' }, persist: () => {},
-  } as any), /窗口标题降级进程名匹配/);
+  assert.deepEqual(patches, [{ playerPriority: ['spotify', 'netease', 'qq', 'kugou', 'kuwo'] }]);
+  const explicit: any[] = [];
+  definition.preflight!({ cfg: defaults(), persist: (patch: any) => explicit.push(patch) } as any);
+  assert.deepEqual(explicit, []);
 });
