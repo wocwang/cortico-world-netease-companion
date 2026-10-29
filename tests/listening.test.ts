@@ -205,6 +205,34 @@ test('按保留天数清理旧记录，并重建累计排名', async () => {
   }
 });
 
+test('月历、当天明细与播放器拆分', async () => {
+  const dir = await temp();
+  try {
+    const store = new ListeningMemoryStore(dir);
+    const at = Date.parse('2026-04-05T10:00:00Z');
+    await store.record({ title: 'A', artist: '歌手A', album: '', app: 'cloudmusic.exe' }, at);
+    await store.record({ title: 'B', artist: '歌手B', album: '', app: 'QQMusic.exe' }, at + 3_600_000);
+    const month = await store.month('2026-04');
+    assert.equal(month.status, 'ok');
+    assert.equal(month.days.length, 1);
+    assert.equal(month.totalPlays, 2);
+    assert.equal(month.days[0].date, '2026-04-05');
+    const day = await store.day('2026-04-05');
+    assert.equal(day?.tracks.length, 2);
+    assert.deepEqual(day?.tracks.find(track => track.title === 'A')?.players, [{ app: 'cloudmusic.exe', count: 1 }]);
+    const stats = await store.playerStats();
+    assert.deepEqual(stats.map(item => item.app), ['cloudmusic.exe', 'QQMusic.exe']);
+    assert.equal(stats[0].plays, 1);
+    assert.equal(stats[0].share, 0.5);
+    assert.equal(stats[0].days, 1);
+    assert.deepEqual(stats[0].topArtists, [{ name: '歌手A', count: 1 }]);
+    assert.deepEqual(await store.month('2026-05'), { status: 'empty', month: '2026-05', totalPlays: 0, days: [] });
+    assert.equal(await store.day('bad'), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('听歌记忆可持久化并单独清除', async () => {
   const dir = await temp();
   try {

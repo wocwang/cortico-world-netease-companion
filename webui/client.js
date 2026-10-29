@@ -579,6 +579,8 @@ export default {
             { k: zh ? '来源' : 'Source', v: s.method || '-' },
             { k: zh ? '陪听' : 'Commentary', v: s.commentary },
             { k: zh ? '分段陪听' : 'Segments', v: s.segments || '已关闭' },
+            { k: zh ? '下一段' : 'Next segment', v: s.nextSegment || '—' },
+            { k: zh ? '安静时段' : 'Quiet hours', v: s.quiet || '正常' },
             { k: zh ? '动作提示' : 'Action hints', v: s.actions || '已关闭' },
             { k: zh ? '评论区' : 'Comments', v: s.comment },
             { k: zh ? '歌手资料' : 'Artist', v: s.artist },
@@ -719,6 +721,15 @@ export default {
         const zh = String(ctx.language ?? 'zh').startsWith('zh');
         let windowValue = '90';
         let refresh = async () => {};
+        let lastSnapshot = null;
+        let monthValue = (() => {
+          const now = new Date();
+          return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        })();
+        let monthData = null;
+        let dayData = null;
+        let selectedDate = '';
+        let loadMonth = async () => {};
         const note = ui.msgline('');
         const windows = ui.segmented([
           { value: '7', label: zh ? '7 天' : '7d' },
@@ -730,14 +741,19 @@ export default {
           onSelect: value => { windowValue = value; void refresh(); },
         });
         const bar = ui.rowbar();
-        bar.append(windows.el, ui.chip(zh ? '从听歌记录汇总' : 'From listening log', 'plain'));
+        const exportJson = ui.button(zh ? '导出 JSON' : 'Export JSON', { size: 'sm', onClick: () => exportData('json') });
+        const exportCsv = ui.button(zh ? '导出 CSV' : 'Export CSV', { size: 'sm', onClick: () => exportData('csv') });
+        bar.append(windows.el, ui.chip(zh ? '从听歌记录汇总' : 'From listening log', 'plain'), ui.h('span', 'grow'), exportJson, exportCsv);
 
         const statsHost = ui.h('div');
         const hourChart = ui.h('div');
         const dayChart = ui.h('div');
+        const monthBar = ui.rowbar();
+        const dayDetail = ui.h('div');
         const artistTable = ui.table({ head: zh ? ['#', '歌手', '播放'] : ['#', 'Artist', 'Plays'], maxHeight: '26vh' });
         const genreTable = ui.table({ head: zh ? ['#', '曲风', '播放', '占比'] : ['#', 'Genre', 'Plays', 'Share'], maxHeight: '26vh' });
         const repeatTable = ui.table({ head: zh ? ['#', '歌曲', '歌手', '播放'] : ['#', 'Song', 'Artist', 'Plays'], maxHeight: '26vh' });
+        const playerTable = ui.table({ head: zh ? ['播放器', '播放', '占比', '活跃天数', '最近', '常听歌手'] : ['Player', 'Plays', 'Share', 'Days', 'Last', 'Top artists'], maxHeight: '24vh' });
         const playerPie = ui.h('div');
         const genrePie = ui.h('div');
         const playerLegend = ui.h('div');
@@ -746,8 +762,8 @@ export default {
 
         const hourSheet = ui.foldSheet('profile-hours', { title: zh ? '时段分布' : 'Listening hours', desc: zh ? '按 24 小时汇总播放次数，不做人格判断' : 'Plays by hour of day', defaultOpen: true });
         hourSheet.body.append(hourChart);
-        const daySheet = ui.foldSheet('profile-days', { title: zh ? '每日播放' : 'Daily plays', desc: zh ? '按日历显示每天的播放次数，颜色越深播放越多；没有播放的日期为空格' : 'Calendar of daily play counts; darker means more plays, empty days stay blank', defaultOpen: true });
-        daySheet.body.append(dayChart);
+        const daySheet = ui.foldSheet('profile-days', { title: zh ? '每日播放' : 'Daily plays', desc: zh ? '按日历显示每天的播放次数，颜色越深播放越多，悬停可看日期与次数；点击某天查看当天曲目' : 'Calendar of daily play counts; darker means more plays, hover for date and count, click a day for its tracks', defaultOpen: true });
+        daySheet.body.append(monthBar, dayChart, dayDetail);
         const artistSheet = ui.foldSheet('profile-artists', { title: zh ? '常听歌手' : 'Top artists', desc: zh ? '所选窗口内的播放次数' : 'Within the selected window', defaultOpen: true });
         artistSheet.body.append(artistTable.el);
         const genreSheet = ui.foldSheet('profile-genres', { title: zh ? '常听曲风' : 'Top genres', desc: zh ? '饼图取前五，列表从歌曲百科曲风与手动标签汇总；多标签曲风会重复计入' : 'Pie shows the top five; list from song wiki genres and manual tags; multi-genre tracks count in each genre', defaultOpen: true });
@@ -786,10 +802,12 @@ export default {
         playerLegend.style.flex = '1';
         playerHost.append(playerPie, playerLegend);
         playerSheet.body.append(playerHost);
+        const breakdownSheet = ui.foldSheet('profile-player-breakdown', { title: zh ? '播放器拆分' : 'Per-player breakdown', desc: zh ? '按客户端汇总播放次数、活跃天数与常听歌手；旧记录没有客户端归属的播放不参与' : 'Plays, active days and top artists per client; old plays without client attribution are excluded', defaultOpen: true });
+        breakdownSheet.body.append(playerTable.el);
         const tasteSheet = ui.foldSheet('profile-taste', { title: zh ? '口味画像' : 'Taste profile', desc: zh ? '只根据本机听歌记录和明确偏好，不做人格定论' : 'From local listening data and explicit preferences only', defaultOpen: true });
         tasteSheet.body.append(tasteHost);
 
-        ctx.root.append(statsHost, bar, hourSheet.el, daySheet.el, artistSheet.el, genreSheet.el, repeatSheet.el, playerSheet.el, tasteSheet.el, note);
+        ctx.root.append(statsHost, bar, hourSheet.el, daySheet.el, artistSheet.el, genreSheet.el, repeatSheet.el, playerSheet.el, breakdownSheet.el, tasteSheet.el, note);
 
         const label = app => (app || '-').replace(/\.exe$/i, '');
         const date = value => {
@@ -978,6 +996,89 @@ export default {
           box.append(monthRow, body, legend);
           host.append(box);
         };
+        const drawMonthCalendar = (host, month, days, selected, onPick) => {
+          host.replaceChildren();
+          const [year, monthNumber] = String(month || '').split('-').map(Number);
+          if (!year || !monthNumber) return;
+          const plays = new Map((days || []).map(item => [item.date, item.plays || 0]));
+          const first = new Date(year, monthNumber - 1, 1);
+          const total = new Date(year, monthNumber, 0).getDate();
+          const max = Math.max(1, ...plays.values());
+          const level = count => {
+            if (!count) return 0;
+            if (count <= max * 0.25) return 1;
+            if (count <= max * 0.5) return 2;
+            if (count <= max * 0.75) return 3;
+            return 4;
+          };
+          const percent = [0, 22, 38, 58, 82];
+          const wrap = ui.h('div');
+          wrap.style.maxWidth = '430px';
+          const head = ui.h('div');
+          head.style.display = 'grid';
+          head.style.gridTemplateColumns = 'repeat(7, minmax(30px, 1fr))';
+          head.style.gap = '4px';
+          head.style.marginBottom = '4px';
+          for (const name of zh ? ['日', '一', '二', '三', '四', '五', '六'] : ['S', 'M', 'T', 'W', 'T', 'F', 'S']) {
+            const cell = ui.h('div', '', name);
+            cell.style.fontSize = '9px';
+            cell.style.opacity = '.5';
+            cell.style.textAlign = 'center';
+            head.append(cell);
+          }
+          const grid = ui.h('div');
+          grid.style.display = 'grid';
+          grid.style.gridTemplateColumns = 'repeat(7, minmax(30px, 1fr))';
+          grid.style.gap = '4px';
+          for (let i = 0; i < first.getDay(); ++i) grid.append(ui.h('div'));
+          const now = new Date();
+          const todayKey = dayKey(now);
+          for (let day = 1; day <= total; ++day) {
+            const date = `${month}-${String(day).padStart(2, '0')}`;
+            const count = plays.get(date) || 0;
+            const cell = ui.h('div');
+            cell.style.minHeight = '42px';
+            cell.style.borderRadius = '5px';
+            cell.style.padding = '4px';
+            cell.style.background = 'rgba(128,128,128,.10)';
+            if (count) cell.style.background = `color-mix(in srgb, var(--accent, #5b8cff) ${percent[level(count)]}%, transparent)`;
+            if (date === todayKey) cell.style.border = '1px solid rgba(128,128,128,.45)';
+            if (date === selected) {
+              cell.style.outline = '1px solid var(--accent, #5b8cff)';
+              cell.style.outlineOffset = '1px';
+            }
+            cell.style.cursor = 'pointer';
+            cell.title = `${date} · ${count} ${zh ? '次' : 'plays'}`;
+            const number = ui.h('div', '', String(day));
+            number.style.fontSize = '10px';
+            number.style.opacity = '.72';
+            const value = ui.h('div', '', count ? String(count) : '');
+            value.style.fontSize = '9px';
+            value.style.opacity = '.55';
+            value.style.textAlign = 'right';
+            cell.append(number, value);
+            cell.addEventListener('click', () => onPick(date));
+            grid.append(cell);
+          }
+          wrap.append(head, grid);
+          host.append(wrap);
+        };
+        const drawDayDetail = (host, day, zh) => {
+          host.replaceChildren();
+          if (!day || day.status === 'empty' || !day.date) {
+            host.append(ui.h('div', 'tdesc', zh ? '点击日历中的日期查看当天曲目' : 'Click a date in the calendar to see its tracks'));
+            return;
+          }
+          host.append(ui.h('div', 'tdesc', `${day.date} · ${day.plays ?? 0} ${zh ? '次播放' : 'plays'}`));
+          const table = ui.table({ head: zh ? ['歌曲', '歌手', '专辑', '播放'] : ['Track', 'Artist', 'Album', 'Plays'], maxHeight: '22vh' });
+          const tracks = [...(day.tracks || [])].sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+          table.clear(tracks.length ? '' : (zh ? '这一天没有曲目明细' : 'No track detail for this day'));
+          for (const track of tracks) table.addRow([track.title || '-', track.artist || '-', track.album || '-', track.count]);
+          host.append(table.el);
+          const players = (day.players || []).filter(item => item.app && item.app !== 'unknown')
+            .map(item => `${label(item.app)} ${item.count}`).join(' · ');
+          if (players) host.append(ui.h('div', 'tdesc', `${zh ? '客户端' : 'Clients'}：${players}`));
+        };
         const drawPie = players => {
           playerLegend.replaceChildren();
           if (!players.length) {
@@ -1050,6 +1151,7 @@ export default {
           });
         };
         const draw = s => {
+          lastSnapshot = s;
           const cumulative = s.scope === 'cumulative';
           const mixed = s.scope === 'mixed';
           const topArtist = s.topArtists?.[0];
@@ -1077,13 +1179,21 @@ export default {
           hourSheet.note.textContent = peak.count
             ? `${zh ? '峰值' : 'Peak'} ${String(peak.hour).padStart(2, '0')}:00 · ${peak.count} ${zh ? '次' : 'plays'}`
             : (zh ? '还没有时段记录' : 'No hour data yet');
-          const calendarDays = Math.max(1, Number(s.calendarDays) || (s.all ? 365 : 90));
-          const daily = s.daily || [];
-          drawCalendar(dayChart, daily, calendarDays, zh);
-          const dailyPlays = daily.reduce((sum, item) => sum + (item.plays || 0), 0);
-          daySheet.note.textContent = daily.length
-            ? `${calendarDays} ${zh ? '天' : 'days'} · ${daily.length} ${zh ? '天有记录' : 'recorded'} · ${dailyPlays} ${zh ? '次' : 'plays'}`
-            : (zh ? '还没有逐日记录' : 'No daily data yet');
+          const breakdown = s.playerBreakdown || [];
+          playerTable.clear(breakdown.length ? '' : (zh ? '还没有客户端归属记录' : 'No player attribution yet'));
+          for (const item of breakdown) {
+            playerTable.addRow([
+              label(item.app),
+              item.plays,
+              `${Math.round((item.share || 0) * 100)}%`,
+              item.days,
+              item.lastAt || '-',
+              (item.topArtists || []).map(artist => `${artist.name}（${artist.count}）`).join('、') || '-',
+            ]);
+          }
+          breakdownSheet.note.textContent = breakdown.length
+            ? `${breakdown.length} ${zh ? '个客户端' : 'clients'}`
+            : (zh ? '还没有客户端归属记录' : 'No player attribution yet');
           const artists = s.topArtists || [];
           bars(artistTable, artists, (item, plays) => [ui.chip(String(artists.indexOf(item) + 1), 'plain'), item.name, plays],
             zh ? '还没有常听歌手' : 'No top artists yet');
@@ -1137,6 +1247,88 @@ export default {
                   ? `窗口 ${s.all ? '全部' : `${s.windowDays} 天`} · 共 ${s.totalPlays ?? 0} 次播放 · 更新于 ${new Date(s.updatedAt).toLocaleTimeString()}`
                   : `${s.all ? 'All time' : `${s.windowDays} days`} · ${s.totalPlays ?? 0} plays · updated ${new Date(s.updatedAt).toLocaleTimeString()}`);
         };
+        const download = (name, content, type) => {
+          const blob = new Blob([content], { type });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = name;
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        };
+        const exportData = kind => {
+          const snapshot = lastSnapshot || {};
+          const month = monthData || { month: monthValue, days: [] };
+          if (kind === 'json') {
+            download(`listening-profile-${monthValue}.json`,
+              JSON.stringify({ profile: snapshot, month }, null, 2), 'application/json');
+            return;
+          }
+          const rows = [['date', 'plays', 'track', 'artist', 'album', 'count', 'players']];
+          const days = month.days || [];
+          if (!days.length) rows.push([monthValue, '', '', '', '', '', '']);
+          for (const day of days) {
+            if (!day.tracks?.length) {
+              rows.push([day.date, day.plays, '', '', '', '', '']);
+              continue;
+            }
+            for (const track of day.tracks) {
+              rows.push([day.date, day.plays, track.title || '', track.artist || '', track.album || '', track.count,
+                (track.players || []).map(player => `${player.app}:${player.count}`).join('|')]);
+            }
+          }
+          const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
+            .join('\r\n');
+          download(`listening-${monthValue}.csv`, '\uFEFF' + csv, 'text/csv;charset=utf-8');
+        };
+        const shiftMonth = delta => {
+          const [year, month] = monthValue.split('-').map(Number);
+          const next = new Date(year, month - 1 + delta, 1);
+          monthValue = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+          void loadMonth();
+        };
+        const drawMonthBar = () => {
+          monthBar.replaceChildren();
+          const [year, month] = monthValue.split('-').map(Number);
+          const prev = ui.button('‹', { size: 'sm', onClick: () => shiftMonth(-1) });
+          const next = ui.button('›', { size: 'sm', onClick: () => shiftMonth(1) });
+          const title = ui.h('span', '', `${year} ${zh ? '年' : '/'} ${month} ${zh ? '月' : ''}`);
+          title.style.fontWeight = '600';
+          const thisMonth = ui.button(zh ? '本月' : 'This month', { size: 'sm', onClick: () => {
+            const now = new Date();
+            monthValue = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            void loadMonth();
+          } });
+          monthBar.append(prev, title, next, ui.h('span', 'grow'), thisMonth);
+        };
+        const openDay = async date => {
+          selectedDate = date;
+          drawMonthCalendar(dayChart, monthValue, monthData?.days || [], selectedDate, openDay);
+          try {
+            dayData = await ctx.invoke('day', date);
+          } catch {
+            dayData = null;
+          }
+          drawDayDetail(dayDetail, dayData, zh);
+        };
+        loadMonth = async () => {
+          drawMonthBar();
+          try {
+            monthData = await ctx.invoke('calendar', monthValue);
+          } catch {
+            monthData = null;
+          }
+          selectedDate = '';
+          dayData = null;
+          const days = monthData?.days || [];
+          drawMonthCalendar(dayChart, monthValue, days, '', openDay);
+          drawDayDetail(dayDetail, null, zh);
+          daySheet.note.textContent = days.length
+            ? `${days.length} ${zh ? '天有记录' : 'recorded days'} · ${monthData.totalPlays ?? 0} ${zh ? '次' : 'plays'}`
+            : (zh ? '这个月还没有逐日记录' : 'No daily records this month');
+        };
         refresh = async () => {
           try {
             draw(await ctx.invoke('snapshot', [windowValue]));
@@ -1146,6 +1338,7 @@ export default {
           }
         };
         void refresh();
+        void loadMonth();
         ctx.interval(() => void refresh(), 15000);
       },
     },

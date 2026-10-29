@@ -36,6 +36,30 @@ test('LRCLIB 在网易云没有匹配时兜底同步歌词', async () => {
   assert.match(queried, /track_name=%E6%99%B4%E5%A4%A9/);
 });
 
+test('Spotify 曲目优先 LRCLIB，并用专辑与时长选择版本', async () => {
+  let neteaseCalls = 0;
+  let queried = '';
+  const netease: typeof fetch = async () => {
+    neteaseCalls++;
+    return notFound();
+  };
+  const lrclib: typeof fetch = async input => {
+    queried = String(input);
+    return reply([
+      { trackName: '晴天', artistName: '周杰伦', albumName: '其他专辑', duration: 200, syncedLyrics: '[00:01.00]错误版本' },
+      { trackName: '晴天', artistName: '周杰伦', albumName: '叶惠美', duration: 269, syncedLyrics: '[00:01.00]正确版本' },
+    ]);
+  };
+  const spotify: Track = { ...track, player: 'spotify', app: 'Spotify.exe', durationSeconds: 269 };
+  const result = await new NeteaseComments(netease, lrclib).lyrics(spotify, undefined, 20);
+  assert.equal(result.status, 'ok');
+  assert.equal(result.source, 'lrclib');
+  assert.deepEqual(result.lines?.map(line => line.text), ['正确版本']);
+  assert.equal(neteaseCalls, 0);
+  assert.match(queried, /album_name=/);
+  assert.match(queried, /duration=269/);
+});
+
 test('网易云有歌曲但没有歌词时，用 LRCLIB 兜底并保留歌曲信息', async () => {
   const netease: typeof fetch = async input => {
     const url = new URL(String(input));

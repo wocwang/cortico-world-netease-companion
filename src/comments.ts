@@ -10,6 +10,8 @@ export interface Song { id: number; title: string; artists: string[]; album: str
 interface LrclibRecord {
   trackName?: string;
   artistName?: string;
+  albumName?: string;
+  duration?: number;
   instrumental?: boolean;
   plainLyrics?: string | null;
   syncedLyrics?: string | null;
@@ -593,11 +595,12 @@ export class NeteaseComments implements CommentProvider {
     return songs;
   }
   /**
-   * QQ 播放器先用 QQ 公开搜索补一层曲目标签，再回退到网易云检索。
-   * Spotify、酷狗、酷我没有可直接查询的评论/百科来源，仍回退到网易云。
+   * 非网易云播放器先用 QQ 公开搜索补一层曲目标签，再回退到网易云检索。
+   * Spotify、酷狗、酷我没有可直接查询的评论/百科来源，但可以用 QQ 的中文曲目标签
+   * 提高网易云评论与百科的命中率。
    */
   private async preferredLabels(track: Track, signal?: AbortSignal): Promise<Array<{ title: string; artist: string; album: string }>> {
-    if (track.player !== 'qq') return [];
+    if (!track.player || track.player === 'netease') return [];
     const key = trackKey(track);
     const cached = this.sourceLabels.get(key);
     if (cached && cached.until > Date.now()) return cached.labels;
@@ -808,6 +811,8 @@ export class NeteaseComments implements CommentProvider {
   private async lrclibLyrics(track: Track, signal: AbortSignal | undefined, maxLines: number): Promise<LyricsReference | null> {
     const params = new URLSearchParams({ track_name: track.title });
     if (track.artist) params.set('artist_name', track.artist);
+    if (track.album) params.set('album_name', track.album);
+    if (track.durationSeconds !== undefined && Number.isFinite(track.durationSeconds)) params.set('duration', String(Math.round(track.durationSeconds)));
     const url = 'https://lrclib.net/api/search?' + params.toString();
     const request = () => this.lyricRequest(url, {
       headers: { accept: 'application/json', 'user-agent': USER_AGENT },
@@ -830,6 +835,7 @@ export class NeteaseComments implements CommentProvider {
     if (!Array.isArray(records)) return null;
     const titleKey = lrclibKey(track.title);
     const artistKey = lrclibKey(track.artist);
+    const albumKey = lrclibKey(track.album);
     let best: { lines: LyricsLine[]; score: number } | null = null;
     for (const raw of records) {
       const record = raw as LrclibRecord;
@@ -845,6 +851,9 @@ export class NeteaseComments implements CommentProvider {
       else if (recordTitle.includes(titleKey) || titleKey.includes(recordTitle)) score += 2;
       if (artistKey && recordArtist === artistKey) score += 3;
       else if (artistKey && (recordArtist.includes(artistKey) || artistKey.includes(recordArtist))) score += 1;
+      if (albumKey && record.albumName && lrclibKey(record.albumName) === albumKey) score += 2;
+      if (track.durationSeconds !== undefined && record.duration !== undefined
+        && Math.abs(record.duration - track.durationSeconds) <= 3) score += 2;
       if (!best || score > best.score) best = { lines, score };
     }
     if (!best || best.score <= 0) return null;
@@ -864,6 +873,18 @@ export class NeteaseComments implements CommentProvider {
     signal?.throwIfAborted();
     if (cached && cached.until > Date.now()) return cached.result;
     let result: LyricsReference = { status: 'unavailable', reason: '歌词读取失败' };
+    let triedLrclib = false;
+    // Spotify 的英文/日文曲目在网易云经常只能匹配到翻唱；先试 LRCLIB 的同步歌词。
+    if (track.player === 'spotify') {
+      triedLrclib = true;
+      const first = await this.lrclibLyrics(track, signal, maxLines);
+      if (first) {
+        this.lyricCache.delete(key);
+        this.lyricCache.set(key, { until: Date.now() + 60 * 60_000, result: first });
+        while (this.lyricCache.size > 20) this.lyricCache.delete(this.lyricCache.keys().next().value!);
+        return first;
+      }
+    }
     try {
       if (Date.now() >= this.blockedUntil) {
         const found = await this.find(track, signal);
@@ -892,7 +913,7 @@ export class NeteaseComments implements CommentProvider {
       if (signal?.aborted) throw e;
       result = { status: 'unavailable', reason: e instanceof Error ? e.message : '歌词读取失败' };
     }
-    if (result.status !== 'ok') {
+    if (result.status !== 'ok' && !triedLrclib) {
       const fallback = await this.lrclibLyrics(track, signal, maxLines);
       if (fallback) {
         if (result.song) fallback.song = result.song;

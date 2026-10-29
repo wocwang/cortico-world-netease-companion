@@ -90,6 +90,7 @@ export class MusicWorld implements World {
   private playback = new PlaybackStateTracker();
   private lastCommented?: { track: Track; at: number };
   private lastStateAt = 0;
+  private lastActionAt = 0;
   private memoryKey = '';
   private memorySince = 0;
   private memoryRecorded = '';
@@ -169,6 +170,15 @@ export class MusicWorld implements World {
     const base = commentLimits(this.cfg).intervalSeconds;
     return { ...this.cfg, cooldownSeconds: Math.max(30, Math.min(3600, Math.round(base * factor))) };
   }
+  /** 安静时段只拦自动评论，不拦用户主动对话。跨零点时用 23–7 这种区间。 */
+  private quietNow(now: number): boolean {
+    if (this.cfg.quietHours !== true) return false;
+    const start = Math.max(0, Math.min(23, Math.floor(Number(this.cfg.quietStart) || 0)));
+    const end = Math.max(0, Math.min(23, Math.floor(Number(this.cfg.quietEnd) || 0)));
+    if (start === end) return false;
+    const hour = new Date(now).getHours();
+    return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+  }
   /** 事件只带一份紧凑记忆，避免每首歌都把完整历史塞进上下文。 */
   private async listeningBrief(track: Track | null): Promise<Record<string, unknown>> {
     if (!this.listening) return { status: 'unavailable' };
@@ -240,6 +250,7 @@ export class MusicWorld implements World {
         tags: this.tags?.stat() ?? '未启用',
       },
       daily: history.days.slice(-calendarDays).map(day => ({ date: day.date, plays: day.plays })),
+      playerBreakdown: await this.listening.playerStats(window),
       hours: taste?.hours ?? Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 })),
       topArtists: taste?.topArtists ?? [],
       topGenres: taste?.topGenres ?? [],
@@ -395,6 +406,19 @@ export class MusicWorld implements World {
       } : { status: 'unavailable' },
     };
   }
+  /** 个人画像月历：某个自然月有记录的日期，供日历翻页使用。 */
+  private async profileCalendar(value: unknown): Promise<Record<string, unknown>> {
+    if (!this.listening) return { status: 'unavailable' };
+    const month = typeof value === 'string' ? value : '';
+    return { ...(await this.listening.month(month)) };
+  }
+  /** 个人画像点开某一天：返回当天曲目、歌手、时段与客户端。 */
+  private async profileDay(value: unknown): Promise<Record<string, unknown>> {
+    if (!this.listening) return { status: 'unavailable' };
+    const date = typeof value === 'string' ? value : '';
+    const day = await this.listening.day(date);
+    return day ? { status: 'ok', ...day } : { status: 'empty', date };
+  }
   webUi(): WorldWebUiDecl {
     return {
       // 配置入口统一到「设置」面板；不再声明宿主配置组，避免同一套字段出现两份表单。
@@ -416,6 +440,8 @@ export class MusicWorld implements World {
         if (panel === 'reader-diagnostics' && method === 'restart') return this.restartReader();
         if (panel === 'reader-diagnostics') throw new Error('未知的读取诊断请求');
         if (panel === 'profile-analysis' && method === 'snapshot') return this.profileSnapshot(args?.[0]);
+        if (panel === 'profile-analysis' && method === 'calendar') return this.profileCalendar(args?.[0]);
+        if (panel === 'profile-analysis' && method === 'day') return this.profileDay(args?.[0]);
         if (panel === 'profile-analysis') throw new Error('未知的画像请求');
         if (panel === 'data-overview' && method === 'snapshot') return this.overviewSnapshot();
         if (panel === 'data-overview') throw new Error('未知的数据一览请求');
@@ -446,6 +472,8 @@ export class MusicWorld implements World {
           segments: this.cfg.segmentComments === true
             ? `${segmentLimits(this.cfg).count} 段${this.cfg.segmentEverySeconds ? ` · 无位置时每 ${this.cfg.segmentEverySeconds} 秒` : ' · 只按播放位置'}`
             : '已关闭',
+          nextSegment: this.segmentPreview(),
+          quiet: this.quietNow(Date.now()) ? '安静中' : '正常',
           actions: this.cfg.actionHints === false ? '已关闭' : (this.actionVocab() ? `开启 · ${this.actionVocab()!.motions.length} 个动作` : '开启 · 形象词表未读取'),
           comment: this.lastReference,
           artist: this.artistEnabled() ? this.lastArtist : '已关闭',
@@ -657,6 +685,7 @@ export class MusicWorld implements World {
     this.focusUsed.clear();
     this.lastCommented = undefined;
     this.lastStateAt = 0;
+    this.lastActionAt = 0;
     this.playback = new PlaybackStateTracker();
     this.startReader(generation);
     this.timer = setInterval(() => { void this.tick(); }, 1000);
@@ -788,6 +817,18 @@ export class MusicWorld implements World {
       if (clock >= points[i] && !this.segmentFired.has(i)) chosen = i;
     return chosen >= 0 ? { track, index: chosen } : null;
   }
+  /** 实时状态里的分段预览：下一段编号与大约剩余秒数。 */
+  private segmentPreview(): string {
+    if (this.cfg.segmentComments !== true) return '已关闭';
+    const track = this.state.current;
+    if (!track) return '无当前曲目';
+    const points = this.segmentPoints(track);
+    if (!points.length) return '当前曲目没有可用分段';
+    const clock = this.segmentClock(track);
+    const index = points.findIndex((point, i) => !this.segmentFired.has(i) && point > clock);
+    if (index < 0) return '本首分段已完成';
+    return `第 ${index + 1}/${points.length} 段 · 约 ${Math.max(0, Math.round(points[index] - clock))} 秒后`;
+  }
   /** 优先用 SMTC 时长；没有时通过一次在线搜索读取曲目时长，用于无播放位置时的循环计数。 */
   private requestDuration(track: Track, key: string): void {
     this.durationMs = Math.round((track.durationSeconds ?? 0) * 1000);
@@ -844,6 +885,11 @@ export class MusicWorld implements World {
     const host = this.host;
     if (this.retryAt - now > 30_000) this.retryAt = 0;
     if (!host || this.pending || now < this.retryAt) return;
+    if (this.quietNow(now)) {
+      // 安静时段不推任何提示，但仍更新播放状态，避免结束后补发一条迟到的暂停/恢复。
+      this.playback.update(this.state.current, now);
+      return;
+    }
     const stateCue = this.playback.update(this.state.current, now);
     if (stateCue && this.cfg.stateComments !== false && await this.pushStateComment(stateCue, now)) return;
     if (now - this.lastStateAt < 15_000) return;
@@ -915,9 +961,12 @@ export class MusicWorld implements World {
       const vocab = this.cfg.actionHints === false ? null : this.actionVocab();
       const wikiGenres = commentReference.songBackground?.wiki?.genres ?? [];
       if (wikiGenres.length) void this.tags?.rememberGenres(track, wikiGenres);
-      const style = section?.id === 'chorus' && vocab
+      const actionCooldown = Math.max(0, Math.min(600, Math.floor(Number(this.cfg.actionCooldownSeconds) || 0)));
+      const actionReady = actionCooldown === 0 || now - this.lastActionAt >= actionCooldown * 1000;
+      const style = section?.id === 'chorus' && vocab && actionReady
         ? (songTag?.feel ? styleFromTag(songTag.feel, songTag.genre, vocab.motions) : styleOf(commentReference.songBackground, vocab.motions))
         : null;
+      if (style?.actions.length) this.lastActionAt = now;
       const external = await host.pushEvent({ type: 'netease-music.comment_opportunity', source: this.id,
         origin: 'external', ts: new Date(now).toISOString(), senderKey: 'local-player', tags: ['snapshot'],
         text: JSON.stringify({ track, observation: 'metadata only; no audio', observedAt: new Date(this.state.observedAt).toISOString(),

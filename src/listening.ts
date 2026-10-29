@@ -58,7 +58,11 @@ export interface ListeningRelation {
   artist?: { name: string; count: number; lastAt: string };
 }
 
-export interface HistoryTrack { title: string; artist: string; album: string; count: number; lastAt: string }
+export interface HistoryTrack {
+  title: string; artist: string; album: string; count: number; lastAt: string;
+  /** 这次播放来自哪些客户端；旧记录没有这个字段。 */
+  players?: Array<{ app: string; count: number }>;
+}
 export interface HistoryArtist { name: string; count: number; lastAt: string }
 export interface ListeningDay {
   date: string;
@@ -96,6 +100,22 @@ export interface PrunePreview {
   removedPlays: number;
   keptDays: number;
   keptPlays: number;
+}
+/** 个人画像按月读取：只返回该月有记录的日期，日历自己补齐空格。 */
+export interface ListeningMonth {
+  status: 'ok' | 'empty';
+  month: string;
+  totalPlays: number;
+  days: ListeningDay[];
+}
+/** 按播放器拆分：次数、活跃天数与有曲目归属时的常听歌手。 */
+export interface PlayerStat {
+  app: string;
+  plays: number;
+  share: number;
+  days: number;
+  lastAt: string;
+  topArtists: Array<{ name: string; count: number }>;
 }
 
 /** 配置文件允许的上限；读取旧文件时也只保留这么多，防止异常文件拖慢界面。 */
@@ -307,12 +327,22 @@ export class ListeningMemoryStore {
     const iso = new Date(at).toISOString();
     const hour = new Date(at).getHours();
     day.hours[hour] = (day.hours[hour] ?? 0) + times;
+    const app = track.app || 'unknown';
     const foundTrack = day.tracks.find(item => key(item.title, item.artist, item.album) === trackKey);
     if (foundTrack) {
       foundTrack.count += times;
       foundTrack.lastAt = iso;
+      if (app !== 'unknown') {
+        const foundPlayer = foundTrack.players?.find(item => item.app === app);
+        if (foundPlayer) foundPlayer.count += times;
+        else (foundTrack.players ??= []).push({ app, count: times });
+        foundTrack.players = (foundTrack.players ?? []).slice(0, 8);
+      }
     } else {
-      day.tracks.push({ title: track.title, artist: track.artist, album: track.album, count: times, lastAt: iso });
+      day.tracks.push({
+        title: track.title, artist: track.artist, album: track.album, count: times, lastAt: iso,
+        ...(app !== 'unknown' ? { players: [{ app, count: times }] } : {}),
+      });
     }
     const artistName = track.artist || '未知歌手';
     const foundArtist = day.artists.find(item => norm(item.name) === norm(artistName));
@@ -323,7 +353,6 @@ export class ListeningMemoryStore {
     } else {
       day.artists.push({ name: artistName, count: times, lastAt: iso });
     }
-    const app = track.app || 'unknown';
     const foundPlayer = day.players.find(item => item.app === app);
     if (foundPlayer) foundPlayer.count += times;
     else day.players.push({ app, count: times });
@@ -344,6 +373,65 @@ export class ListeningMemoryStore {
     const cutoff = localDate(new Date(`${latest}T00:00:00`).getTime() - (limit - 1) * 86_400_000);
     const list = sorted.filter(day => day.date >= cutoff).slice(0, limit);
     return { status: list.length ? 'ok' : 'empty', totalPlays: list.reduce((sum, day) => sum + day.plays, 0), days: list };
+  }
+  /** 月历数据：某个自然月内实际有记录的日期。 */
+  async month(value: string): Promise<ListeningMonth> {
+    const month = String(value ?? '').trim();
+    if (!/^\d{4}-\d{2}$/.test(month)) return { status: 'empty', month, totalPlays: 0, days: [] };
+    const data = await this.load();
+    const days = data.days.filter(day => day.date.startsWith(month)).sort((a, b) => a.date.localeCompare(b.date));
+    return { status: days.length ? 'ok' : 'empty', month, totalPlays: days.reduce((sum, day) => sum + day.plays, 0), days };
+  }
+  /** 日历点开某一天时读取当天的曲目、歌手、时段与客户端。 */
+  async day(value: string): Promise<ListeningDay | null> {
+    const date = String(value ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const data = await this.load();
+    return data.days.find(day => day.date === date) ?? null;
+  }
+  /** 按播放器拆分：旧记录没有客户端字段时不参与，有逐曲客户端归属时再汇总常听歌手。 */
+  async playerStats(days = MAX_WINDOW_DAYS): Promise<PlayerStat[]> {
+    const data = await this.load();
+    const limit = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.floor(days)));
+    const sorted = [...data.days].sort((a, b) => a.date.localeCompare(b.date));
+    const latest = sorted.at(-1)?.date;
+    const cutoff = latest
+      ? localDate(new Date(`${latest}T00:00:00`).getTime() - (limit - 1) * 86_400_000)
+      : '';
+    const selected = cutoff ? sorted.filter(day => day.date >= cutoff) : [];
+    const stats = new Map<string, {
+      plays: number; days: number; lastAt: string; artists: Map<string, number>;
+    }>();
+    for (const day of selected) {
+      for (const player of day.players) {
+        const app = (player.app ?? '').trim();
+        if (!app || app === 'unknown') continue;
+        const entry = stats.get(app) ?? { plays: 0, days: 0, lastAt: '', artists: new Map<string, number>() };
+        entry.plays += player.count;
+        entry.days += 1;
+        if (day.date > entry.lastAt) entry.lastAt = day.date;
+        stats.set(app, entry);
+      }
+      for (const track of day.tracks) {
+        for (const player of track.players ?? []) {
+          const app = (player.app ?? '').trim();
+          if (!app || app === 'unknown') continue;
+          const entry = stats.get(app);
+          if (!entry) continue;
+          const artist = track.artist || '未知歌手';
+          entry.artists.set(artist, (entry.artists.get(artist) ?? 0) + player.count);
+        }
+      }
+    }
+    const total = [...stats.values()].reduce((sum, item) => sum + item.plays, 0);
+    return [...stats.entries()]
+      .map(([app, item]) => ({
+        app, plays: item.plays, share: total ? item.plays / total : 0,
+        days: item.days, lastAt: item.lastAt,
+        topArtists: [...item.artists.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+          .map(([name, count]) => ({ name, count })),
+      }))
+      .sort((a, b) => b.plays - a.plays || a.app.localeCompare(b.app));
   }
 
   /** 老版本只存了累计排名；逐日记录为空时，画像用这份数据兜底，避免升级后从零开始。 */

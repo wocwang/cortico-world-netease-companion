@@ -13,6 +13,16 @@ test('评论与状态提示要求语音 World 同步发声', () => {
   assert.match((world as any).stateCueText({ kind: 'paused', track: null }), /sovits_speak/);
 });
 
+test('安静时段跨零点生效，用户主动对话不受影响', () => {
+  const world = new MusicWorld({ ...defaults(), quietHours: true, quietStart: 23, quietEnd: 7 }, () => {});
+  const at = (hour: number, minute = 0) => new Date(2026, 9, 29, hour, minute).getTime();
+  assert.equal((world as any).quietNow(at(23, 30)), true);
+  assert.equal((world as any).quietNow(at(3)), true);
+  assert.equal((world as any).quietNow(at(6, 59)), true);
+  assert.equal((world as any).quietNow(at(7)), false);
+  assert.equal((world as any).quietNow(at(22, 59)), false);
+});
+
 test('webUi 提供实时状态面板与快照', async () => {
   const world = new MusicWorld(defaults(), () => {});
   const web = world.webUi();
@@ -272,6 +282,15 @@ test('已有逐日记录时仍保留更新前的累计排名', async () => {
     assert.equal(profile.players[0].count, 4);
     assert.match(profile.summary, /9 次播放/);
     assert.match(profile.summary, /4 次来自更新前/);
+    const calendar = await web.invoke!('profile-analysis', 'calendar', ['2026-10']) as any;
+    assert.equal(calendar.status, 'ok');
+    assert.equal(calendar.days.length, 1);
+    assert.equal(calendar.days[0].date, '2026-10-28');
+    const day = await web.invoke!('profile-analysis', 'day', ['2026-10-28']) as any;
+    assert.equal(day.status, 'ok');
+    assert.equal(day.tracks.length, 2);
+    assert.deepEqual(profile.playerBreakdown.map((item: any) => item.app), ['cloudmusic', 'QQMusic']);
+    assert.equal(profile.playerBreakdown[0].plays, 4);
     const taste = JSON.parse(String(await (world.tools().find(tool => tool.name === 'music_taste')!.handler as any)(
       { days: 7 }, {})));
     assert.equal(taste.status, 'ok');
