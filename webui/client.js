@@ -1307,7 +1307,7 @@ export default {
           selectedDate = date;
           drawMonthCalendar(dayChart, monthValue, monthData?.days || [], selectedDate, openDay);
           try {
-            dayData = await ctx.invoke('day', date);
+            dayData = await ctx.invoke('day', [date]);
           } catch {
             dayData = null;
           }
@@ -1315,19 +1315,24 @@ export default {
         };
         loadMonth = async () => {
           drawMonthBar();
+          let failure = '';
           try {
-            monthData = await ctx.invoke('calendar', monthValue);
-          } catch {
+            monthData = await ctx.invoke('calendar', [monthValue]);
+          } catch (e) {
             monthData = null;
+            failure = e instanceof Error ? e.message : String(e);
           }
           selectedDate = '';
           dayData = null;
           const days = monthData?.days || [];
           drawMonthCalendar(dayChart, monthValue, days, '', openDay);
           drawDayDetail(dayDetail, null, zh);
-          daySheet.note.textContent = days.length
-            ? `${days.length} ${zh ? '天有记录' : 'recorded days'} · ${monthData.totalPlays ?? 0} ${zh ? '次' : 'plays'}`
-            : (zh ? '这个月还没有逐日记录' : 'No daily records this month');
+          // 读取失败不能显示成「没有记录」，否则日历出错会被当成没听歌。
+          daySheet.note.classList.toggle('bad', !!failure);
+          daySheet.note.textContent = failure
+            || (days.length
+              ? `${days.length} ${zh ? '天有记录' : 'recorded days'} · ${monthData.totalPlays ?? 0} ${zh ? '次' : 'plays'}`
+              : (zh ? '这个月还没有逐日记录' : 'No daily records this month'));
         };
         refresh = async () => {
           try {
