@@ -40,6 +40,7 @@
 
 - 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`：npm Automation token，需有该包的 publish 权限。没有这个 secret 时 `release.yml` 会在发布步骤失败。
 - 推送 `v*` 标签（内容需与 `package.json` 版本一致）后，`release.yml` 会依次运行类型检查、测试、`describe`、`check`，再执行 `npm publish --provenance --access public`，最后用 `GITHUB_TOKEN` 创建 GitHub Release。
+- 手动 `npm publish` 之后立刻打 tag 时，registry 传播有延迟：发布步骤会先重试 4 次（每次间隔 20 秒）确认该版本是否已存在，确认已发布就跳过 `npm publish`，不会因为查不到而误判成未发布。
 - `ci.yml` 在 main 推送和 PR 时运行同样的检查，并校验 `describe.json` 没有未提交的生成差异。
 - 本地仍可手动发布；自动流程只是为了减少漏跑测试或版本不一致。
 
