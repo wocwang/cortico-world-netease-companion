@@ -70,6 +70,24 @@ export function matchesWant(want: WantItem, track: Pick<Track, 'title' | 'artist
   return titleHit + artistHit + durationHit + albumHit >= 55;
 }
 
+/** 写盘格式集中在这里，导入时也复用。 */
+export function serializeWants(items: WantItem[], updatedAt = new Date().toISOString()): string {
+  return JSON.stringify({ version: 1, updatedAt, items }, null, 2);
+}
+
+/** 两处想听清单合并：同一 id 保留更晚的一条，按时间排序后截上限。 */
+export function mergeWants(parts: Array<{ items?: unknown }>): WantItem[] {
+  const items = new Map<string, WantItem>();
+  for (const raw of parts) {
+    const list = Array.isArray(raw?.items) ? raw.items.filter(validWant) : [];
+    for (const item of list) {
+      const found = items.get(item.id);
+      if (!found || item.at >= found.at) items.set(item.id, item);
+    }
+  }
+  return [...items.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-MAX_WANTS);
+}
+
 export class WantStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
@@ -84,21 +102,8 @@ export class WantStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    const items = new Map<string, WantItem>();
-    let updatedAt = '';
-    for (const raw of await readJsonVariants<{ items?: unknown; updatedAt?: unknown }>(this.dir, this.local, 'wants.json')) {
-      const list = Array.isArray(raw?.items) ? raw.items.filter(validWant) : [];
-      for (const item of list) {
-        const found = items.get(item.id);
-        if (!found || item.at >= found.at) items.set(item.id, item);
-      }
-      if (typeof raw?.updatedAt === 'string' && raw.updatedAt > updatedAt) updatedAt = raw.updatedAt;
-    }
-    this.data = {
-      version: 1,
-      updatedAt: updatedAt || new Date(this.now()).toISOString(),
-      items: [...items.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-MAX_WANTS),
-    };
+    const items = mergeWants(await readJsonVariants<{ items?: unknown }>(this.dir, this.local, 'wants.json'));
+    this.data = { version: 1, updatedAt: new Date(this.now()).toISOString(), items };
     return this.data;
   }
 
@@ -198,7 +203,7 @@ export class WantStore {
 
   private async save(data: Data): Promise<void> {
     await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'wants.json',
-      JSON.stringify(data, null, 2));
+      serializeWants(data.items, data.updatedAt));
     this.data = data;
   }
 

@@ -1389,6 +1389,23 @@ export default {
         migrationButton.style.display = 'none';
         const migrationBar = ui.rowbar();
         migrationBar.append(ui.h('span', 'grow'), migrationButton);
+        const importInput = ui.input({ type: 'text', placeholder: zh ? '要导入的记忆文件夹' : 'Folder to import' });
+        importInput.style.flex = '1';
+        const importPick = ui.button(zh ? '选择文件夹' : 'Choose folder', { size: 'sm', onClick: () => void pickImport() });
+        const importPreviewButton = ui.button(zh ? '预览' : 'Preview', { size: 'sm', onClick: () => void previewImport() });
+        const importBar = ui.rowbar();
+        importBar.append(importInput, importPick, importPreviewButton);
+        const importNote = ui.msgline('');
+        const importTable = ui.table({
+          head: zh ? ['文件', '来源', '当前', '合并后'] : ['File', 'Source', 'Current', 'Merged'],
+          maxHeight: '22vh',
+        });
+        const importMerge = ui.button(zh ? '合并导入' : 'Merge import', { size: 'sm', onClick: () => void runImport('merge') });
+        const importReplace = ui.button(zh ? '替换导入' : 'Replace import', { variant: 'danger', size: 'sm', onClick: () => void runImport('replace') });
+        importMerge.disabled = true;
+        importReplace.disabled = true;
+        const importActions = ui.rowbar();
+        importActions.append(ui.h('span', 'grow'), importMerge, importReplace);
         const summary = ui.h('div');
         const table = ui.table({
           head: zh ? ['文件', '内容', '大小', '位置'] : ['File', 'Content', 'Size', 'Location'],
@@ -1398,7 +1415,10 @@ export default {
         const note = ui.msgline('');
         const refresh = ui.button(zh ? '刷新' : 'Refresh', { size: 'sm', onClick: () => void load() });
         bar.append(ui.h('span', 'grow'), refresh);
-        ctx.root.append(info, memoryLine, migrationLine, migrationBar, summary, table.el, bar, ui.h('div', 'tdesc', zh
+        ctx.root.append(info, memoryLine, migrationLine, migrationBar, ui.h('div', 'tdesc', zh
+          ? '导入记忆：把另一个文件夹里的听歌记录、笔记、标签、偏好、口味档案与想听清单并进当前记忆目录。合并会保留两边，替换会用来源覆盖（先自动备份当前文件）。'
+          : 'Import: merge listening log, notes, tags, preferences, taste file and wish list from another folder. Merge keeps both sides; replace overwrites after backing up the current files.'),
+        importBar, importNote, importTable.el, importActions, summary, table.el, bar, ui.h('div', 'tdesc', zh
           ? '只读展示，不提供清除。只有「听歌记录」会被「数据清理」按保留天数删除；口味档案、想听清单、偏好、口味快照、单曲笔记与听感标签只存很小的文本，不参与清理。'
           : 'Read-only; nothing here clears data. Only the listening log is pruned by Data cleanup; the taste file, wish list, preferences, taste snapshot, notes and tags are tiny text files and are never cleaned.'), note);
 
@@ -1407,6 +1427,72 @@ export default {
           if (bytes < 1024) return `${bytes} B`;
           if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
           return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+        };
+        let replaceArmed = false;
+        const pickImport = async () => {
+          try {
+            const picked = await ctx.pickPath({
+              kind: 'directory',
+              title: zh ? '选择要导入的记忆文件夹' : 'Choose memory folder to import',
+              currentPath: importInput.value.trim() || undefined,
+            });
+            if (!picked) return;
+            importInput.value = picked;
+            await previewImport();
+          } catch (e) {
+            importNote.classList.add('bad');
+            importNote.textContent = e instanceof Error ? e.message : String(e);
+          }
+        };
+        const previewImport = async () => {
+          importMerge.disabled = true;
+          importReplace.disabled = true;
+          replaceArmed = false;
+          importReplace.textContent = zh ? '替换导入' : 'Replace import';
+          importTable.clear('');
+          try {
+            const p = await ctx.invoke('importPreview', [importInput.value.trim()]);
+            importNote.classList.toggle('bad', p.status !== 'ok');
+            importNote.textContent = p.note || '';
+            if (p.status !== 'ok') return;
+            for (const file of p.files)
+              importTable.addRow([file.label, file.source, file.current, file.mergeable ? file.merged : '—']);
+            importMerge.disabled = false;
+            importReplace.disabled = false;
+          } catch (e) {
+            importNote.classList.add('bad');
+            importNote.textContent = e instanceof Error ? e.message : String(e);
+          }
+        };
+        const runImport = async mode => {
+          const source = importInput.value.trim();
+          if (!source) {
+            importNote.classList.add('bad');
+            importNote.textContent = zh ? '请先选择要导入的文件夹' : 'Choose a folder first';
+            return;
+          }
+          if (mode === 'replace' && !replaceArmed) {
+            replaceArmed = true;
+            importReplace.textContent = zh ? '再点一次确认替换' : 'Click again to confirm';
+            importNote.classList.remove('bad');
+            importNote.textContent = zh
+              ? '替换会用来源覆盖当前同名文件，当前文件会先备份到记忆目录的 import-backup 下。再点一次「替换导入」才会执行。'
+              : 'Replace overwrites current files; they are backed up under import-backup first. Click the button again to proceed.';
+            return;
+          }
+          importMerge.disabled = true;
+          importReplace.disabled = true;
+          try {
+            const result = await ctx.invoke('importMemory', [source, mode]);
+            importNote.classList.toggle('bad', result.status !== 'ok');
+            importNote.textContent = [result.note, result.backup ? `${zh ? '备份' : 'Backup'}：${result.backup}` : ''].filter(Boolean).join(' · ');
+            replaceArmed = false;
+            importReplace.textContent = zh ? '替换导入' : 'Replace import';
+            if (result.status === 'ok') await load();
+          } catch (e) {
+            importNote.classList.add('bad');
+            importNote.textContent = e instanceof Error ? e.message : String(e);
+          }
         };
         const migrate = async () => {
           migrationButton.disabled = true;

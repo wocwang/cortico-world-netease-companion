@@ -38,6 +38,25 @@ function validTag(value: unknown): value is SongTag {
     && (validFeel(tag.feel) || hasGenres) && typeof tag.updatedAt === 'string';
 }
 
+/** 写盘格式集中在这里，导入时也复用。 */
+export function serializeTags(tags: SongTag[], updatedAt = new Date().toISOString()): string {
+  return JSON.stringify({ version: 1, updatedAt, tags }, null, 2);
+}
+
+/** 两处标签合并：同一首保留更新时间更晚的那条，整体按更新时间排序后截上限。 */
+export function mergeTags(parts: Array<{ tags?: unknown }>): SongTag[] {
+  const merged = new Map<string, SongTag>();
+  for (const raw of parts) {
+    const tags = Array.isArray(raw?.tags) ? raw.tags.filter(validTag) : [];
+    for (const tag of tags) {
+      const key = trackKey(tag);
+      const found = merged.get(key);
+      if (!found || tag.updatedAt >= found.updatedAt) merged.set(key, tag);
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(-MAX_TAGS);
+}
+
 export class TagStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
@@ -52,18 +71,7 @@ export class TagStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    const merged = new Map<string, SongTag>();
-    for (const raw of await readJsonVariants<{ tags?: unknown }>(this.dir, this.local, 'tags.json')) {
-      const tags = Array.isArray(raw?.tags) ? raw.tags.filter(validTag) : [];
-      for (const tag of tags) {
-        const key = trackKey(tag);
-        const found = merged.get(key);
-        if (!found || tag.updatedAt >= found.updatedAt) merged.set(key, tag);
-      }
-    }
-    this.data = {
-      tags: [...merged.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(-MAX_TAGS),
-    };
+    this.data = { tags: mergeTags(await readJsonVariants<{ tags?: unknown }>(this.dir, this.local, 'tags.json')) };
     return this.data;
   }
 
@@ -162,6 +170,6 @@ export class TagStore {
 
   private async save(data: Data): Promise<void> {
     await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'tags.json',
-      JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), tags: data.tags }, null, 2));
+      serializeTags(data.tags, new Date(this.now()).toISOString()));
   }
 }

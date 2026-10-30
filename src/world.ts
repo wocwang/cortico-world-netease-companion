@@ -22,6 +22,7 @@ import { TasteStore } from './taste.ts';
 import { isMigrated, lastWriteFallback, layoutNote, migrateMemory, migrationPlan, resolveLayout, type MemoryLayout } from './storage.ts';
 import { SoulStore, SOUL_SECTIONS } from './soul.ts';
 import { WantStore } from './wants.ts';
+import { importMemory, previewImport, type ImportMode } from './import.ts';
 import { PlaybackStateTracker, type PlaybackCue } from './playback-state.ts';
 
 export const toolDecls: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
@@ -182,6 +183,15 @@ export class MusicWorld implements World {
       this.resetStoreCaches();
     }
     return { ...result, migration: migrationPlan(layout.memory, this.localDir, layout.custom) };
+  }
+  /** 「数据一览」页的导入：合并或替换，导入后丢掉合并缓存；口味快照由下一次画像或 music_taste 按新记录重建。 */
+  private async importMemoryNow(source: unknown, modeValue: unknown): Promise<Record<string, unknown>> {
+    const sourceDir = String(source ?? '').trim();
+    if (!sourceDir) return { status: 'invalid', note: '请先选择要导入的文件夹。' };
+    const mode: ImportMode = modeValue === 'replace' ? 'replace' : 'merge';
+    const result = await importMemory(sourceDir, this.memoryDir(), mode);
+    if (result.status === 'ok') this.resetStoreCaches();
+    return { ...result, mode };
   }
   envPromptVars(): Record<string, string> {
     const segments = segmentLimits(this.cfg);
@@ -523,7 +533,7 @@ export class MusicWorld implements World {
         { id: 'reader-diagnostics', title: '读取诊断', description: '查看读取器命中的播放器、全部 SMTC 会话与窗口候选，并可单独重启读取器' },
         { id: 'listening-ranking', title: '听歌排名', description: '按播放次数排列的常听歌曲与歌手，数量随配置上限' },
         { id: 'profile-analysis', title: '个人画像', description: '按天汇总的听歌节奏、常听歌手、循环曲、播放器占比与口味画像' },
-        { id: 'data-overview', title: '数据一览', description: '只读查看本插件各数据文件存了什么、占多大，不提供清理操作' },
+        { id: 'data-overview', title: '数据一览', description: '查看各数据文件的用途、大小与位置，可把本机记忆迁到当前目录，或从另一个文件夹合并/替换导入记忆' },
         { id: 'data-cleanup', title: '数据清理', description: '按保留天数清理更早的听歌记录，并显示清理了多少天与多少次播放' },
         { id: 'settings', title: '设置', description: '按用途折叠的陪听、背景资料、歌词、排名与读取设置' },
       ],
@@ -539,6 +549,9 @@ export class MusicWorld implements World {
         if (panel === 'profile-analysis') throw new Error('未知的画像请求');
         if (panel === 'data-overview' && method === 'snapshot') return this.overviewSnapshot();
         if (panel === 'data-overview' && method === 'migrate') return this.migrateMemoryNow();
+        if (panel === 'data-overview' && method === 'importPreview')
+          return previewImport(String(args?.[0] ?? ''), this.memoryDir());
+        if (panel === 'data-overview' && method === 'importMemory') return this.importMemoryNow(args?.[0], args?.[1]);
         if (panel === 'data-overview') throw new Error('未知的数据一览请求');
         if (panel === 'data-cleanup' && method === 'snapshot') return this.cleanupSnapshot();
         if (panel === 'data-cleanup' && method === 'preview') return this.cleanupPreview(args?.[0]);

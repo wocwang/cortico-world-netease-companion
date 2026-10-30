@@ -33,6 +33,25 @@ function validNote(value: unknown): value is SongNote {
     && typeof note.createdAt === 'string' && typeof note.updatedAt === 'string';
 }
 
+/** 写盘格式集中在这里，导入时也复用。 */
+export function serializeNotes(notes: SongNote[], updatedAt = new Date().toISOString()): string {
+  return JSON.stringify({ version: 1, updatedAt, notes }, null, 2);
+}
+
+/** 两处笔记合并：同一首保留更新时间更晚的那条，整体按更新时间排序后截上限。 */
+export function mergeNotes(parts: Array<{ notes?: unknown }>): SongNote[] {
+  const merged = new Map<string, SongNote>();
+  for (const raw of parts) {
+    const notes = Array.isArray(raw?.notes) ? raw.notes.filter(validNote) : [];
+    for (const note of notes) {
+      const key = trackKey(note);
+      const found = merged.get(key);
+      if (!found || note.updatedAt >= found.updatedAt) merged.set(key, note);
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(-MAX_NOTES);
+}
+
 export class NotesStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
@@ -47,21 +66,7 @@ export class NotesStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    const merged = new Map<string, SongNote>();
-    for (const raw of await readJsonVariants<{ notes?: unknown }>(this.dir, this.local, 'notes.json')) {
-      const notes = Array.isArray(raw?.notes) ? raw.notes.filter(validNote) : [];
-      // 两处都有同一首时保留更新时间更晚的那条。
-      for (const note of notes) {
-        const key = trackKey(note);
-        const found = merged.get(key);
-        if (!found || note.updatedAt >= found.updatedAt) merged.set(key, note);
-      }
-    }
-    this.data = {
-      notes: [...merged.values()]
-        .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
-        .slice(-MAX_NOTES),
-    };
+    this.data = { notes: mergeNotes(await readJsonVariants<{ notes?: unknown }>(this.dir, this.local, 'notes.json')) };
     return this.data;
   }
 
@@ -134,6 +139,6 @@ export class NotesStore {
 
   private async save(data: Data): Promise<void> {
     await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'notes.json',
-      JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), notes: data.notes }, null, 2));
+      serializeNotes(data.notes, new Date(this.now()).toISOString()));
   }
 }

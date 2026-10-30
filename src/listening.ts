@@ -132,7 +132,7 @@ const MAX_ARTISTS_PER_DAY = 30;
 /** 曲目在切换或关闭播放器前至少稳定这么久，才算一次听歌记录。 */
 export const LISTENING_DWELL_MS = DWELL_SECONDS * 1000;
 
-interface Data {
+export interface Data {
   totalPlays: number;
   tracks: ListeningTrack[];
   artists: ListeningArtist[];
@@ -172,7 +172,7 @@ function validDay(value: unknown): value is ListeningDay {
 const emptyData = (): Data => ({ totalPlays: 0, tracks: [], artists: [], days: [] });
 
 /** 把磁盘上的一份 JSON 收敛成合法数据；字段缺失或越界一律丢弃，不让异常文件拖慢界面。 */
-function asData(raw: Record<string, unknown> | null | undefined): Data {
+export function asListeningData(raw: Record<string, unknown> | null | undefined): Data {
   const value = raw && typeof raw === 'object' ? raw : {};
   const tracks = (Array.isArray(value.tracks) ? value.tracks.filter(validTrack) : [])
     .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
@@ -245,7 +245,7 @@ function mergeDay(target: ListeningDay, source: ListeningDay): void {
 }
 
 /** 合并当前目录与本机旧目录。只有一处时保持原样，避免每次读取都重建对象。 */
-function mergeData(parts: Data[]): Data {
+export function mergeListeningData(parts: Data[]): Data {
   if (parts.length === 0) return emptyData();
   if (parts.length === 1) return parts[0];
   const tracks = new Map<string, ListeningTrack>();
@@ -286,6 +286,14 @@ function mergeData(parts: Data[]): Data {
       .slice(0, ABSOLUTE_MAX_ARTISTS),
     days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+/** 写盘格式集中在这里，导入导出与正常保存共用一份。 */
+export function serializeListening(data: Data, updatedAt = new Date().toISOString()): string {
+  return JSON.stringify({
+    version: 2, updatedAt, totalPlays: data.totalPlays,
+    tracks: data.tracks, artists: data.artists, days: data.days,
+  }, null, 2);
 }
 
 /**
@@ -366,8 +374,8 @@ export class ListeningMemoryStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    const parts = (await readJsonVariants<Record<string, unknown>>(this.dir, this.local, 'listening.json')).map(asData);
-    let data = mergeData(parts);
+    const parts = (await readJsonVariants<Record<string, unknown>>(this.dir, this.local, 'listening.json')).map(asListeningData);
+    let data = mergeListeningData(parts);
     // 兼容 1.13.0 开发版拆出去的 history.json：合并后只保留 listening.json。
     let migrated = false;
     for (const dir of readDirs(this.dir, this.local)) {
@@ -375,7 +383,7 @@ export class ListeningMemoryStore {
       try {
         const parsed = JSON.parse(await readFile(legacy, 'utf8')) as { days?: unknown };
         if (Array.isArray(parsed?.days)) {
-          data = mergeData([data, asData({ days: parsed.days })]);
+          data = mergeListeningData([data, asListeningData({ days: parsed.days })]);
           migrated = true;
         }
         await rm(legacy, { force: true });
@@ -739,11 +747,7 @@ export class ListeningMemoryStore {
   }
 
   private async save(data: Data): Promise<void> {
-    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'listening.json',
-      JSON.stringify({
-        version: 2, updatedAt: new Date().toISOString(), totalPlays: data.totalPlays,
-        tracks: data.tracks, artists: data.artists, days: data.days,
-      }, null, 2));
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'listening.json', serializeListening(data));
     this.data = data;
   }
 

@@ -34,7 +34,7 @@ const MAX_ENTRIES = 50;
 const MAX_NOTE = 120;
 const MAX_REASON = 120;
 
-interface Data {
+export interface Data {
   entries: CommentPreference[];
   profile: ListeningProfile | null;
 }
@@ -73,8 +73,16 @@ export function profileSummary(entries: CommentPreference[]): string {
     .filter(Boolean).join(' ｜ ');
 }
 
+/** 写盘格式集中在这里，导入时也复用。 */
+export function serializePreferences(data: Data, updatedAt = new Date().toISOString()): string {
+  return JSON.stringify({
+    version: 2, updatedAt, entries: data.entries,
+    ...(data.profile ? { profile: data.profile } : {}),
+  }, null, 2);
+}
+
 /** 两处偏好合并：同一条口味只留更晚的，画像取更晚的一份。 */
-function mergePreferences(parts: Record<string, unknown>[]): Data {
+export function mergePreferences(parts: Record<string, unknown>[]): Data {
   const entries = new Map<string, CommentPreference>();
   let profile: ListeningProfile | null = null;
   for (const raw of parts) {
@@ -169,10 +177,7 @@ export class PreferenceStore {
 
   private async save(data: Data): Promise<void> {
     await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'preferences.json',
-      JSON.stringify({
-        version: 2, updatedAt: new Date().toISOString(), entries: data.entries,
-        ...(data.profile ? { profile: data.profile } : {}),
-      }, null, 2));
+      serializePreferences(data));
   }
 
   stat(): string {
