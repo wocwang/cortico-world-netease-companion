@@ -348,6 +348,9 @@ export class ListeningMemoryStore {
   /** 换目录后本机旧记录仍要读得到：写入走 dir，读取把 local 一起合并。 */
   useLocal(dir: DirRef): this { this.local = dir; return this; }
 
+  /** 一次性迁移完成后调用：丢掉按两处合并出来的缓存，下一次只读当前目录。 */
+  resetCache(): void { this.data = null; }
+
   get file(): string { return join(dirValue(this.dir), 'listening.json'); }
 
   private limitsNow(): ResolvedListeningLimits {

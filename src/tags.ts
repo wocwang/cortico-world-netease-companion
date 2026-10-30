@@ -46,6 +46,8 @@ export class TagStore {
 
   useLocal(dir: DirRef): this { this.local = dir; return this; }
 
+  resetCache(): void { this.data = null; }
+
   get file(): string { return join(dirValue(this.dir), 'tags.json'); }
 
   private async load(): Promise<Data> {

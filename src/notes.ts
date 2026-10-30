@@ -41,6 +41,8 @@ export class NotesStore {
 
   useLocal(dir: DirRef): this { this.local = dir; return this; }
 
+  resetCache(): void { this.data = null; }
+
   get file(): string { return join(dirValue(this.dir), 'notes.json'); }
 
   private async load(): Promise<Data> {

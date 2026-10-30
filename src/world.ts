@@ -19,7 +19,7 @@ import { styleFromTag, styleOf, type ChorusStyle } from './style.ts';
 import { NotesStore } from './notes.ts';
 import { TAG_FEELS, TagStore, type TagFeel } from './tags.ts';
 import { TasteStore } from './taste.ts';
-import { lastWriteFallback, layoutNote, resolveLayout, type MemoryLayout } from './storage.ts';
+import { isMigrated, lastWriteFallback, layoutNote, migrateMemory, migrationPlan, resolveLayout, type MemoryLayout } from './storage.ts';
 import { SoulStore, SOUL_SECTIONS } from './soul.ts';
 import { WantStore } from './wants.ts';
 import { PlaybackStateTracker, type PlaybackCue } from './playback-state.ts';
@@ -95,6 +95,7 @@ export class MusicWorld implements World {
   private wants?: WantStore;
   private localDir = '';
   private layoutCache?: { configured: string; layout: MemoryLayout };
+  private migrationCache?: { memory: string; done: boolean };
   private playback = new PlaybackStateTracker();
   private lastCommented?: { track: Track; at: number };
   private lastStateAt = 0;
@@ -120,13 +121,14 @@ export class MusicWorld implements World {
     this.localDir = preferencesDir;
     if (preferencesDir) {
       const memory = () => this.memoryDir();
-      this.preferences = new PreferenceStore(memory).useLocal(preferencesDir);
-      this.listening = new ListeningMemoryStore(memory, () => listeningLimits(this.cfg)).useLocal(preferencesDir);
-      this.notes = new NotesStore(memory).useLocal(preferencesDir);
-      this.tags = new TagStore(memory).useLocal(preferencesDir);
-      this.taste = new TasteStore(memory).useLocal(preferencesDir);
-      this.wants = new WantStore(memory).useLocal(preferencesDir);
-      this.soul = new SoulStore(memory, preferencesDir);
+      const local = () => this.mergeLocal();
+      this.preferences = new PreferenceStore(memory).useLocal(local);
+      this.listening = new ListeningMemoryStore(memory, () => listeningLimits(this.cfg)).useLocal(local);
+      this.notes = new NotesStore(memory).useLocal(local);
+      this.tags = new TagStore(memory).useLocal(local);
+      this.taste = new TasteStore(memory).useLocal(local);
+      this.wants = new WantStore(memory).useLocal(local);
+      this.soul = new SoulStore(memory).useLocal(local);
     }
   }
   /** 当前记忆写入目录；配置改了就重新探测，运行中不反复写探针。 */
@@ -137,6 +139,50 @@ export class MusicWorld implements World {
     return this.layoutCache.layout;
   }
   private memoryDir(): string { return this.memoryLayout().memory; }
+  /** 本机旧目录是否还要参与合并读取；一次性迁移完成后就不再读，避免同一段历史被算两遍。 */
+  private mergeLocal(): string {
+    if (!this.localDir) return '';
+    const layout = this.memoryLayout();
+    if (!layout.custom) return this.localDir;
+    const memory = layout.memory;
+    if (!this.migrationCache || this.migrationCache.memory !== memory)
+      this.migrationCache = { memory, done: isMigrated(memory, this.localDir) };
+    return this.migrationCache.done ? '' : this.localDir;
+  }
+  private resetStoreCaches(): void {
+    this.preferences?.resetCache();
+    this.listening?.resetCache();
+    this.notes?.resetCache();
+    this.tags?.resetCache();
+    this.taste?.resetCache();
+    this.wants?.resetCache();
+  }
+  /** 切到自定义目录后自动迁一次本机旧记忆；换目录时只迁缺失文件，不覆盖新目录已有内容。 */
+  private async ensureMigration(): Promise<void> {
+    const layout = this.memoryLayout();
+    if (!layout.custom || !this.localDir || this.migrationCache?.done) return;
+    try {
+      const result = await migrateMemory(layout.memory, this.localDir);
+      if (result.marked) {
+        this.migrationCache = { memory: layout.memory, done: true };
+        this.resetStoreCaches();
+      }
+    } catch {
+      // 迁移失败不影响正常读写：没写标记就继续合并读取两处。
+    }
+  }
+  /** 「数据一览」页的手动迁移按钮。 */
+  private async migrateMemoryNow(): Promise<Record<string, unknown>> {
+    if (!this.localDir) return { status: 'unavailable', note: '没有本机数据目录，无法迁移。' };
+    const layout = this.memoryLayout();
+    if (!layout.custom) return { status: 'local', note: '当前就是本机默认目录，不需要迁移。' };
+    const result = await migrateMemory(layout.memory, this.localDir);
+    if (result.marked) {
+      this.migrationCache = { memory: layout.memory, done: true };
+      this.resetStoreCaches();
+    }
+    return { ...result, migration: migrationPlan(layout.memory, this.localDir, layout.custom) };
+  }
   envPromptVars(): Record<string, string> {
     const segments = segmentLimits(this.cfg);
     return {
@@ -344,6 +390,7 @@ export class MusicWorld implements World {
         problem: layout.problem, notice: layout.notice, note: layoutNote(layout),
         fallback: lastWriteFallback(),
       },
+      migration: migrationPlan(layout.memory, layout.local, layout.custom),
     };
   }
   /** 数据清理页在选择保留天数时先预览会删除多少，不写文件。 */
@@ -491,6 +538,7 @@ export class MusicWorld implements World {
         if (panel === 'profile-analysis' && method === 'day') return this.profileDay(args?.[0]);
         if (panel === 'profile-analysis') throw new Error('未知的画像请求');
         if (panel === 'data-overview' && method === 'snapshot') return this.overviewSnapshot();
+        if (panel === 'data-overview' && method === 'migrate') return this.migrateMemoryNow();
         if (panel === 'data-overview') throw new Error('未知的数据一览请求');
         if (panel === 'data-cleanup' && method === 'snapshot') return this.cleanupSnapshot();
         if (panel === 'data-cleanup' && method === 'preview') return this.cleanupPreview(args?.[0]);
@@ -501,7 +549,11 @@ export class MusicWorld implements World {
           const patch = args[0];
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('设置参数无效');
           const normalized = normalizeConfigPatch(patch as Record<string, unknown>);
-          if (Object.keys(normalized).length) this.persist(normalized);
+          if (Object.keys(normalized).length) {
+            this.persist(normalized);
+            // 改记忆位置后立刻尝试迁一次本机旧记忆，不用等下次启动。
+            if ('memoryDir' in normalized) void this.ensureMigration();
+          }
           return { result: 'saved' };
         }
         if (panel === 'settings') throw new Error('未知的设置请求');
@@ -774,6 +826,7 @@ export class MusicWorld implements World {
     this.lastStateAt = 0;
     this.lastActionAt = 0;
     this.playback = new PlaybackStateTracker();
+    void this.ensureMigration();
     this.startReader(generation);
     this.timer = setInterval(() => { void this.tick(); }, 1000);
   }

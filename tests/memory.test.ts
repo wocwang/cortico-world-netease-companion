@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { ListeningMemoryStore } from '../src/listening.ts';
 import { NotesStore } from '../src/notes.ts';
 import { SoulStore, parseSoul, soulSkeleton } from '../src/soul.ts';
-import { clearWriteFallback, lastWriteFallback, readDirs, resolveLayout, sameDir, writeTextWithFallback } from '../src/storage.ts';
+import { clearWriteFallback, isMigrated, lastWriteFallback, migrateMemory, migrationPlan, readDirs, resolveLayout, sameDir, writeTextWithFallback } from '../src/storage.ts';
+import { defaults } from '../src/config.ts';
+import { MusicWorld } from '../src/world.ts';
 import type { Track } from '../src/state.ts';
 
 const temp = () => mkdtemp(join(tmpdir(), 'netease-memory-'));
@@ -140,6 +142,60 @@ test('口味档案：只追加与删除，整篇可用于提示词，清理不�
 
     await store.clear();
     assert.ok((await readFile(store.file, 'utf8')).includes('## 还没想明白'));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('切换目录后一次性迁移：复制缺失文件、写标记并停止合并读取', async () => {
+  const dir = await temp();
+  try {
+    const local = join(dir, 'local');
+    const memory = join(dir, 'memory');
+    await mkdir(local, { recursive: true });
+    await writeFile(join(local, 'listening.json'), JSON.stringify({
+      version: 2, totalPlays: 2, tracks: [], artists: [], days: [],
+    }), 'utf8');
+    const plan = migrationPlan(memory, local, true);
+    assert.equal(plan.status, 'ready');
+    assert.equal(plan.needed, true);
+    assert.equal(plan.canMark, true);
+    const result = await migrateMemory(memory, local);
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(result.copied, ['listening.json']);
+    assert.equal(result.marked, true);
+    assert.equal(isMigrated(memory, local), true);
+    assert.equal(migrationPlan(memory, local, true).status, 'done');
+
+    // 迁移后这台机器只读新目录：同一段历史不会被合并成两倍（否则是 4）。
+    const world = new MusicWorld({ ...defaults(), memoryDir: memory }, () => {}, undefined, undefined, local);
+    await (world as any).ensureMigration();
+    const cumulative = await (world as any).listening.cumulative();
+    assert.equal(cumulative.totalPlays, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('两边都有不同内容时不覆盖，也不写迁移标记，继续合并读取', async () => {
+  const dir = await temp();
+  try {
+    const local = join(dir, 'local');
+    const memory = join(dir, 'memory');
+    await mkdir(local, { recursive: true });
+    await mkdir(memory, { recursive: true });
+    await writeFile(join(local, 'listening.json'), JSON.stringify({ version: 2, totalPlays: 1, tracks: [], artists: [], days: [] }), 'utf8');
+    await writeFile(join(memory, 'listening.json'), JSON.stringify({ version: 2, totalPlays: 12345, tracks: [], artists: [], days: [] }), 'utf8');
+    const plan = migrationPlan(memory, local, true);
+    assert.equal(plan.canMark, false);
+    assert.equal(plan.files.find(file => file.name === 'listening.json')?.action, 'conflict');
+    const result = await migrateMemory(memory, local);
+    assert.equal(result.marked, false);
+    assert.deepEqual(result.copied, []);
+    assert.deepEqual(result.conflicts, ['listening.json']);
+    assert.equal(isMigrated(memory, local), false);
+    const kept = JSON.parse(await readFile(join(memory, 'listening.json'), 'utf8'));
+    assert.equal(kept.totalPlays, 12345);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

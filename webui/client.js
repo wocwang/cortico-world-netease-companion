@@ -1382,6 +1382,13 @@ export default {
         const zh = String(ctx.language ?? 'zh').startsWith('zh');
         const info = ui.h('div', 'tdesc', zh ? '正在统计本机数据文件…' : 'Reading local data files…');
         const memoryLine = ui.h('div', 'tdesc', zh ? '正在读取记忆位置…' : 'Reading memory location…');
+        const migrationLine = ui.h('div', 'tdesc', '');
+        const migrationButton = ui.button(zh ? '把本机记忆迁到当前位置' : 'Move local memory here', {
+          size: 'sm', onClick: () => void migrate(),
+        });
+        migrationButton.style.display = 'none';
+        const migrationBar = ui.rowbar();
+        migrationBar.append(ui.h('span', 'grow'), migrationButton);
         const summary = ui.h('div');
         const table = ui.table({
           head: zh ? ['文件', '内容', '大小', '位置'] : ['File', 'Content', 'Size', 'Location'],
@@ -1391,7 +1398,7 @@ export default {
         const note = ui.msgline('');
         const refresh = ui.button(zh ? '刷新' : 'Refresh', { size: 'sm', onClick: () => void load() });
         bar.append(ui.h('span', 'grow'), refresh);
-        ctx.root.append(info, memoryLine, summary, table.el, bar, ui.h('div', 'tdesc', zh
+        ctx.root.append(info, memoryLine, migrationLine, migrationBar, summary, table.el, bar, ui.h('div', 'tdesc', zh
           ? '只读展示，不提供清除。只有「听歌记录」会被「数据清理」按保留天数删除；口味档案、想听清单、偏好、口味快照、单曲笔记与听感标签只存很小的文本，不参与清理。'
           : 'Read-only; nothing here clears data. Only the listening log is pruned by Data cleanup; the taste file, wish list, preferences, taste snapshot, notes and tags are tiny text files and are never cleaned.'), note);
 
@@ -1401,6 +1408,26 @@ export default {
           if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
           return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
         };
+        const migrate = async () => {
+          migrationButton.disabled = true;
+          try {
+            const result = await ctx.invoke('migrate', []);
+            migrationLine.classList.toggle('bad', result.status !== 'ok' || !result.marked);
+            migrationLine.textContent = result.note || (zh ? '没有可迁移的内容' : 'Nothing to migrate');
+            await load();
+            if (result.marked) {
+              note.classList.remove('bad');
+              note.textContent = zh
+                ? '迁移完成：本机旧目录不再参与读取，另一台机器不受影响。'
+                : 'Moved. This machine now reads only the new folder; other machines are unaffected.';
+            }
+          } catch (e) {
+            migrationLine.classList.add('bad');
+            migrationLine.textContent = e instanceof Error ? e.message : String(e);
+          } finally {
+            migrationButton.disabled = false;
+          }
+        };
         const load = async () => {
           refresh.disabled = true;
           try {
@@ -1409,6 +1436,8 @@ export default {
               info.textContent = zh ? '数据文件不可用' : 'Data files unavailable';
               table.clear(zh ? '没有启用的数据文件' : 'No data files');
               summary.replaceChildren();
+              migrationLine.textContent = '';
+              migrationButton.style.display = 'none';
               return;
             }
             info.textContent = zh
@@ -1422,6 +1451,10 @@ export default {
             memoryLine.textContent = `${zh ? '记忆位置' : 'Memory location'}：${memory.dir || '—'}（${kind}）`
               + (memory.problem ? ` · ${memory.problem}` : '')
               + (memory.fallback ? ` · ${zh ? '刚才有一次没写进自定义目录，已回落到本机' : 'one write fell back to local'}` : '');
+            const migration = s.migration || {};
+            migrationLine.classList.remove('bad');
+            migrationLine.textContent = migration.status === 'local' ? '' : (migration.note || '');
+            migrationButton.style.display = migration.status === 'ready' && migration.needed && migration.canMark ? '' : 'none';
             summary.replaceChildren(ui.statgrid([
               { k: zh ? '合计占用' : 'Total size', v: size(s.totalBytes), accent: true },
               { k: zh ? '数据文件' : 'Data files', v: s.files.length, unit: zh ? '个' : 'files' },

@@ -143,6 +143,8 @@ export class TasteStore {
   /** 口味是分析快照，不合并两处：当前目录有就用它，没有才读本机旧快照。 */
   useLocal(dir: DirRef): this { this.local = dir; return this; }
 
+  resetCache(): void { this.data = null; }
+
   get file(): string { return join(dirValue(this.dir), 'taste.json'); }
 
   async read(): Promise<TasteProfile | null> {

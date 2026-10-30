@@ -13,8 +13,8 @@
  * - 当前目录不可用时退回本机，并把原因原样记下来——最坏的情况是
  *   "看起来在同步盘里，其实一直写本机"，这一条不能静默。
  */
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -35,7 +35,10 @@ export interface MemoryLayout {
 export type DirRef = string | (() => string);
 
 /** 我们自己的记忆文件名；换目录时用来判断新目录是不是空的。 */
-const MEMORY_FILES = ['listening.json', 'notes.json', 'tags.json', 'taste.json', 'preferences.json', 'music-soul.md'];
+const MEMORY_FILES = ['listening.json', 'notes.json', 'tags.json', 'taste.json', 'preferences.json',
+  'wants.json', 'music-soul.md'];
+/** 一次性迁移的记录：写在记忆目录，只影响记录里那台机器。 */
+const MIGRATION_MARKER = 'memory-migrated.json';
 
 export function dirValue(dir: DirRef): string {
   return typeof dir === 'function' ? dir() : dir;
@@ -191,4 +194,129 @@ export function layoutNote(layout: MemoryLayout): string {
   if (layout.problem) return layout.problem;
   if (!layout.custom) return '默认跟本机 dataDir；设置里填一个同步盘文件夹可跨机器共用。';
   return layout.notice ?? `正在使用自定义记忆目录：${layout.memory}`;
+}
+
+// ---------------------------------------------------------------------------
+// 一次性迁移
+// ---------------------------------------------------------------------------
+
+export interface MigrationFile {
+  name: string;
+  bytes: number;
+  /** copy=新目录没有，会复制；same=两边一样大，视为已同步；conflict=两边都有内容，不覆盖。 */
+  action: 'copy' | 'same' | 'conflict';
+}
+
+export interface MigrationPlan {
+  status: 'local' | 'done' | 'ready';
+  memory: string;
+  local: string;
+  files: MigrationFile[];
+  /** 可以复制或已同步的文件之外还有冲突时，不写迁移标记，继续合并读取两处。 */
+  canMark: boolean;
+  needed: boolean;
+  note: string;
+}
+
+interface MigrationEntry { from: string; at: string; files: string[] }
+interface MigrationState { version: 1; migrated: MigrationEntry[] }
+
+function readState(memoryDir: string): MigrationState {
+  try {
+    const raw = JSON.parse(readFileSync(join(memoryDir, MIGRATION_MARKER), 'utf8')) as Partial<MigrationState>;
+    const migrated = Array.isArray(raw?.migrated)
+      ? raw.migrated.filter((item): item is MigrationEntry =>
+        !!item && typeof item.from === 'string' && typeof item.at === 'string' && Array.isArray(item.files))
+      : [];
+    return { version: 1, migrated };
+  } catch {
+    return { version: 1, migrated: [] };
+  }
+}
+
+function fileSize(dir: string, name: string): number | null {
+  try {
+    const stat = statSync(join(dir, name));
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 这台机器是否已经把本机记忆迁进了当前目录。迁移过就不该再合并读取，否则会双计。 */
+export function isMigrated(memoryDir: string, localDir: string): boolean {
+  if (!memoryDir || !localDir) return false;
+  return readState(memoryDir).migrated.some(entry => sameDir(entry.from, localDir));
+}
+
+/** 迁移前预览：会复制哪些、哪些已经一样、哪些两边都有内容不覆盖。 */
+export function migrationPlan(memoryDir: string, localDir: string, custom: boolean): MigrationPlan {
+  const base = { memory: memoryDir, local: localDir, files: [] as MigrationFile[], canMark: true, needed: false };
+  if (!custom) return { ...base, status: 'local', note: '当前就是本机默认目录，不需要迁移。' };
+  if (isMigrated(memoryDir, localDir))
+    return { ...base, status: 'done', note: '本机记忆已经迁到当前目录，读取只使用当前目录。' };
+  const files: MigrationFile[] = [];
+  for (const name of MEMORY_FILES) {
+    const bytes = fileSize(localDir, name);
+    if (bytes === null || bytes === 0) continue;
+    const target = fileSize(memoryDir, name);
+    files.push({ name, bytes, action: target === null || target === 0 ? 'copy' : target === bytes ? 'same' : 'conflict' });
+  }
+  const conflicts = files.filter(file => file.action === 'conflict');
+  const canMark = conflicts.length === 0;
+  const needed = files.some(file => file.action === 'copy');
+  const note = needed
+    ? (canMark
+      ? `本机有 ${files.filter(file => file.action === 'copy').length} 个记忆文件还没在新目录里，可以一次性复制过去；成功后这台机器改为只读新目录，另一台机器不受影响。`
+      : `本机有 ${conflicts.length} 个文件在新目录里已有不同内容，不会覆盖；这些文件仍会合并读取，其余会复制。`)
+    : (canMark ? '本机记忆已经和当前目录一致，不需要复制。' : '两边都有内容，保持合并读取，不做迁移。');
+  return { ...base, status: 'ready', files, canMark, needed, note };
+}
+
+/** 把本机记忆复制到当前目录（只复制缺失的），成功后写迁移标记。 */
+export async function migrateMemory(memoryDir: string, localDir: string): Promise<{
+  status: 'skipped' | 'ok' | 'unavailable';
+  copied: string[];
+  skipped: string[];
+  conflicts: string[];
+  marked: boolean;
+  note: string;
+}> {
+  if (!memoryDir || !localDir || sameDir(memoryDir, localDir))
+    return { status: 'unavailable', copied: [], skipped: [], conflicts: [], marked: false, note: '当前就是本机默认目录，不需要迁移。' };
+  if (isMigrated(memoryDir, localDir))
+    return { status: 'skipped', copied: [], skipped: [], conflicts: [], marked: true, note: '本机记忆已经迁到当前目录。' };
+  const plan = migrationPlan(memoryDir, localDir, true);
+  if (plan.status !== 'ready')
+    return { status: 'skipped', copied: [], skipped: [], conflicts: [], marked: false, note: plan.note };
+  const copied: string[] = [];
+  const skipped: string[] = [];
+  const conflicts: string[] = [];
+  for (const file of plan.files) {
+    if (file.action === 'conflict') { conflicts.push(file.name); continue; }
+    if (file.action === 'same') { skipped.push(file.name); continue; }
+    try {
+      await mkdir(memoryDir, { recursive: true });
+      const target = join(memoryDir, file.name);
+      const tmp = `${target}.tmp`;
+      await copyFile(join(localDir, file.name), tmp);
+      await rename(tmp, target);
+      copied.push(file.name);
+    } catch {
+      // 单个文件复制失败就跳过；标记只在全部需要复制的文件都成功后才写。
+      conflicts.push(file.name);
+    }
+  }
+  const marked = plan.canMark && conflicts.length === 0 && (copied.length > 0 || skipped.length > 0);
+  if (marked) {
+    const state = readState(memoryDir);
+    state.migrated.push({ from: localDir, at: new Date().toISOString(), files: [...copied, ...skipped] });
+    await writeFile(join(memoryDir, MIGRATION_MARKER), JSON.stringify(state, null, 2), 'utf8');
+  }
+  const note = marked
+    ? `已把本机 ${copied.length} 个记忆文件复制到「${memoryDir}」，之后这台机器只读新目录。`
+    : conflicts.length
+      ? `有 ${conflicts.length} 个文件没能复制或两边都有内容，未写迁移标记，仍会合并读取两处。`
+      : '没有需要复制的文件。';
+  return { status: 'ok', copied, skipped, conflicts, marked, note };
 }
