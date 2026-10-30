@@ -2,11 +2,12 @@
  * 本插件自己的听感标签，存放在 dataDir/netease-companion/tags.json。
  * 只描述“该怎么反应”，不声称是客观曲风；用户或桌宠标过一次后，同一首后续沿用。
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
 import type { Track } from './state.ts';
+import { dirValue, readJsonVariants, writeTextWithFallback, type DirRef } from './storage.ts';
 
 export const TAG_FEELS = ['hard', 'soft', 'old', 'odd', 'plain'] as const;
 export type TagFeel = typeof TAG_FEELS[number];
@@ -40,20 +41,27 @@ function validTag(value: unknown): value is SongTag {
 export class TagStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
-  constructor(private dir: string, private now: () => number = Date.now) {}
+  private local?: DirRef;
+  constructor(private dir: DirRef, private now: () => number = Date.now) {}
 
-  get file(): string { return join(this.dir, 'tags.json'); }
+  useLocal(dir: DirRef): this { this.local = dir; return this; }
+
+  get file(): string { return join(dirValue(this.dir), 'tags.json'); }
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    let tags: SongTag[] = [];
-    try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8')) as { tags?: unknown };
-      tags = Array.isArray(raw?.tags) ? raw.tags.filter(validTag).slice(-MAX_TAGS) : [];
-    } catch {
-      tags = [];
+    const merged = new Map<string, SongTag>();
+    for (const raw of await readJsonVariants<{ tags?: unknown }>(this.dir, this.local, 'tags.json')) {
+      const tags = Array.isArray(raw?.tags) ? raw.tags.filter(validTag) : [];
+      for (const tag of tags) {
+        const key = trackKey(tag);
+        const found = merged.get(key);
+        if (!found || tag.updatedAt >= found.updatedAt) merged.set(key, tag);
+      }
     }
-    this.data = { tags };
+    this.data = {
+      tags: [...merged.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(-MAX_TAGS),
+    };
     return this.data;
   }
 
@@ -151,9 +159,7 @@ export class TagStore {
   }
 
   private async save(data: Data): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), tags: data.tags }, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'tags.json',
+      JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), tags: data.tags }, null, 2));
   }
 }

@@ -2,12 +2,13 @@
  * 听歌口味档案：从 listening.json 的逐日历史汇总出常听歌手、循环曲、时段与播放器占比。
  * 单独存放在 dataDir/netease-companion/taste.json，是分析快照，不删除原始听歌记录。
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
 import { matchPlayer } from './config.ts';
 import type { CumulativeListening, ListeningHistory } from './listening.ts';
+import { dirValue, readDirs, writeTextWithFallback, type DirRef } from './storage.ts';
 
 export interface TasteProfile {
   version: 1;
@@ -136,20 +137,26 @@ export function buildTaste(history: ListeningHistory, windowDays: number, now = 
 export class TasteStore {
   private data: TasteProfile | null = null;
   private chain: Promise<void> = Promise.resolve();
-  constructor(private dir: string, private now: () => number = Date.now) {}
+  private local?: DirRef;
+  constructor(private dir: DirRef, private now: () => number = Date.now) {}
 
-  get file(): string { return join(this.dir, 'taste.json'); }
+  /** 口味是分析快照，不合并两处：当前目录有就用它，没有才读本机旧快照。 */
+  useLocal(dir: DirRef): this { this.local = dir; return this; }
+
+  get file(): string { return join(dirValue(this.dir), 'taste.json'); }
 
   async read(): Promise<TasteProfile | null> {
     if (this.data) return this.data;
-    try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8')) as TasteProfile;
-      if (raw && typeof raw.updatedAt === 'string' && Array.isArray(raw.topArtists)) {
-        this.data = raw;
-        return raw;
+    for (const dir of readDirs(this.dir, this.local)) {
+      try {
+        const raw = JSON.parse(readFileSync(join(dir, 'taste.json'), 'utf8')) as TasteProfile;
+        if (raw && typeof raw.updatedAt === 'string' && Array.isArray(raw.topArtists)) {
+          this.data = raw;
+          return raw;
+        }
+      } catch {
+        // 这一处没有快照或内容损坏，继续看下一处。
       }
-    } catch {
-      // 没有分析过。
     }
     return null;
   }
@@ -198,10 +205,8 @@ export class TasteStore {
   }
 
   private async save(profile: TasteProfile): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify(profile, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'taste.json',
+      JSON.stringify(profile, null, 2));
     this.data = profile;
   }
 }

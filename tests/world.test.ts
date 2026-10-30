@@ -176,7 +176,7 @@ test('数据清理按保留天数删除旧记录并报告清理量', async () =>
     assert.equal(all.removedDays, 0);
     const overview = await web.invoke!('data-overview', 'snapshot', []) as any;
     assert.equal(overview.status, 'ok');
-    assert.equal(overview.files.length, 5);
+    assert.equal(overview.files.length, 7);
     assert.equal(overview.files.filter((file: any) => file.cleanup).length, 1);
     assert.equal(overview.files.find((file: any) => file.cleanup).key, 'listening');
     assert.ok(overview.totalBytes > 0);
@@ -306,12 +306,18 @@ test('新增播放控制与搜歌工具，默认不执行控制', async () => {
   const tools = world.tools();
   assert.ok(tools.some(tool => tool.name === 'music_control'));
   assert.ok(tools.some(tool => tool.name === 'music_pick'));
+  assert.ok(tools.some(tool => tool.name === 'music_soul'));
   const control = tools.find(tool => tool.name === 'music_control')!;
   const disabled = JSON.parse(String(await (control.handler as any)({ action: 'pause' }, {})));
   assert.equal(disabled.status, 'disabled');
   await assert.rejects((control.handler as any)({ action: 'stop' }, {}), /action/);
   const pick = tools.find(tool => tool.name === 'music_pick')!;
-  await assert.rejects((pick.handler as any)({ query: '' }, {}), /query/);
+  // 没有记忆目录时想听清单不可用：空 query 不再报错，而是如实返回 unavailable。
+  const noQuery = JSON.parse(String(await (pick.handler as any)({ query: '' }, {})));
+  assert.equal(noQuery.status, 'unavailable');
+  const soul = tools.find(tool => tool.name === 'music_soul')!;
+  const soulDisabled = JSON.parse(String(await (soul.handler as any)({ action: 'read' }, {})));
+  assert.equal(soulDisabled.status, 'unavailable');
   const vars = world.envPromptVars();
   assert.equal(vars['music.segmentCount'], '2');
   assert.equal(vars['music.actionHints'], '开启');

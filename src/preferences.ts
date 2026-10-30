@@ -2,10 +2,11 @@
  * 本插件自己的陪听记忆，存放在 dataDir/netease-companion/preferences.json。
  * 与人格、会话、其他插件的记忆完全隔离；记录用户明确表达过的评论口味与陪听节奏画像。
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
+import { dirValue, readDirs, readJsonVariants, writeTextWithFallback, type DirRef } from './storage.ts';
 
 export const PREFERENCE_TAGS = ['story', 'analysis', 'lyrics', 'context', 'humor', 'emotional',
   'background', 'film', 'artist', 'genre', 'generic', 'begging', 'negativity', 'spoiler'] as const;
@@ -72,24 +73,38 @@ export function profileSummary(entries: CommentPreference[]): string {
     .filter(Boolean).join(' ｜ ');
 }
 
+/** 两处偏好合并：同一条口味只留更晚的，画像取更晚的一份。 */
+function mergePreferences(parts: Record<string, unknown>[]): Data {
+  const entries = new Map<string, CommentPreference>();
+  let profile: ListeningProfile | null = null;
+  for (const raw of parts) {
+    const list = Array.isArray(raw?.entries) ? raw.entries.filter(validPreference) : [];
+    for (const entry of list) {
+      const key = `${entry.sentiment}\u0000${entry.note.toLowerCase()}`;
+      const found = entries.get(key);
+      if (!found || entry.at >= found.at) entries.set(key, entry);
+    }
+    if (validProfile(raw?.profile) && (!profile || raw.profile.at >= profile.at)) profile = raw.profile;
+  }
+  return {
+    entries: [...entries.values()].sort((a, b) => a.at.localeCompare(b.at)).slice(-MAX_ENTRIES),
+    profile,
+  };
+}
+
 export class PreferenceStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
-  constructor(private dir: string) {}
+  private local?: DirRef;
+  constructor(private dir: DirRef) {}
 
-  get file(): string { return join(this.dir, 'preferences.json'); }
+  useLocal(dir: DirRef): this { this.local = dir; return this; }
+
+  get file(): string { return join(dirValue(this.dir), 'preferences.json'); }
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8'));
-      this.data = {
-        entries: Array.isArray(raw?.entries) ? raw.entries.filter(validPreference).slice(-MAX_ENTRIES) : [],
-        profile: validProfile(raw?.profile) ? raw.profile : null,
-      };
-    } catch {
-      this.data = { entries: [], profile: null };
-    }
+    this.data = mergePreferences(await readJsonVariants<Record<string, unknown>>(this.dir, this.local, 'preferences.json'));
     return this.data;
   }
 
@@ -104,15 +119,15 @@ export class PreferenceStore {
   /** 供提示词变量等同步场景读取当前画像；不阻塞，也不修改文件。 */
   profileSync(): ListeningProfile | null {
     if (this.data) return this.data.profile;
-    try {
-      const raw = JSON.parse(readFileSync(this.file, 'utf8'));
-      this.data = {
-        entries: Array.isArray(raw?.entries) ? raw.entries.filter(validPreference).slice(-MAX_ENTRIES) : [],
-        profile: validProfile(raw?.profile) ? raw.profile : null,
-      };
-    } catch {
-      this.data = { entries: [], profile: null };
+    const parts: Record<string, unknown>[] = [];
+    for (const dir of readDirs(this.dir, this.local)) {
+      try {
+        parts.push(JSON.parse(readFileSync(join(dir, 'preferences.json'), 'utf8')) as Record<string, unknown>);
+      } catch {
+        // 这一处没有偏好文件或内容损坏，继续看下一处。
+      }
     }
+    this.data = mergePreferences(parts);
     return this.data.profile;
   }
 
@@ -151,22 +166,21 @@ export class PreferenceStore {
   }
 
   private async save(data: Data): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({
-      version: 2, updatedAt: new Date().toISOString(), entries: data.entries,
-      ...(data.profile ? { profile: data.profile } : {}),
-    }, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'preferences.json',
+      JSON.stringify({
+        version: 2, updatedAt: new Date().toISOString(), entries: data.entries,
+        ...(data.profile ? { profile: data.profile } : {}),
+      }, null, 2));
   }
 
   stat(): string {
     const label = (profile: ListeningProfile | null | undefined) => profile ? INTERACTION_LABELS[profile.interaction] : '默认节奏';
     if (this.data) return `${this.data.entries.length} 条 · ${label(this.data.profile)}`;
-    try {
-      const raw = JSON.parse(readFileSync(this.file, 'utf8'));
-      return `${Array.isArray(raw?.entries) ? raw.entries.length : 0} 条 · ${label(validProfile(raw?.profile) ? raw.profile : null)}`;
-    } catch { return '0 条 · 默认节奏'; }
+    const data = mergePreferences(readDirs(this.dir, this.local).map(dir => {
+      try { return JSON.parse(readFileSync(join(dir, 'preferences.json'), 'utf8')) as Record<string, unknown>; }
+      catch { return {}; }
+    }));
+    return `${data.entries.length} 条 · ${label(data.profile)}`;
   }
 
   async clear(): Promise<string> {

@@ -2,11 +2,12 @@
  * 本插件自己的单曲笔记，存放在 dataDir/netease-companion/notes.json。
  * 只记录用户明确说过、值得以后再提起的一句话；不与人格记忆或其他插件共享。
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
 import type { Track } from './state.ts';
+import { dirValue, readJsonVariants, writeTextWithFallback, type DirRef } from './storage.ts';
 
 export interface SongNote {
   title: string;
@@ -35,20 +36,30 @@ function validNote(value: unknown): value is SongNote {
 export class NotesStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
-  constructor(private dir: string, private now: () => number = Date.now) {}
+  private local?: DirRef;
+  constructor(private dir: DirRef, private now: () => number = Date.now) {}
 
-  get file(): string { return join(this.dir, 'notes.json'); }
+  useLocal(dir: DirRef): this { this.local = dir; return this; }
+
+  get file(): string { return join(dirValue(this.dir), 'notes.json'); }
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    let notes: SongNote[] = [];
-    try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8')) as { notes?: unknown };
-      notes = Array.isArray(raw?.notes) ? raw.notes.filter(validNote).slice(-MAX_NOTES) : [];
-    } catch {
-      notes = [];
+    const merged = new Map<string, SongNote>();
+    for (const raw of await readJsonVariants<{ notes?: unknown }>(this.dir, this.local, 'notes.json')) {
+      const notes = Array.isArray(raw?.notes) ? raw.notes.filter(validNote) : [];
+      // 两处都有同一首时保留更新时间更晚的那条。
+      for (const note of notes) {
+        const key = trackKey(note);
+        const found = merged.get(key);
+        if (!found || note.updatedAt >= found.updatedAt) merged.set(key, note);
+      }
     }
-    this.data = { notes };
+    this.data = {
+      notes: [...merged.values()]
+        .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))
+        .slice(-MAX_NOTES),
+    };
     return this.data;
   }
 
@@ -120,9 +131,7 @@ export class NotesStore {
   }
 
   private async save(data: Data): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), notes: data.notes }, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'notes.json',
+      JSON.stringify({ version: 1, updatedAt: new Date(this.now()).toISOString(), notes: data.notes }, null, 2));
   }
 }

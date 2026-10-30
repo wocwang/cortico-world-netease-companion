@@ -30,6 +30,12 @@ export interface MusicConfig {
   listeningArtistLimit: number;
   listeningRankTrackRange: number;
   listeningRankArtistRange: number;
+  /** 记忆保存位置；留空＝跟本机 dataDir。 */
+  memoryDir: string;
+  /** 允许她写自己的口味档案 music-soul.md。 */
+  soulEnabled: boolean;
+  /** 接力点歌：她递出去的那首快结束时推荐下一首。 */
+  relayPick: boolean;
 }
 export interface PlayerDef {
   id: string;
@@ -99,6 +105,7 @@ export const defaults = (): MusicConfig => ({
   lyricsContext: true, lyricsTranslation: true, lyricsLines: 12,
   listeningTrackLimit: 100, listeningArtistLimit: 30,
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
+  memoryDir: '', soulEnabled: true, relayPick: true,
 });
 export function listeningLimits(cfg: MusicConfig): { tracks: number; artists: number; rankTracks: number; rankArtists: number } {
   const bounded = (value: number, fallback: number, min: number, max: number) =>
@@ -185,6 +192,16 @@ export const configGroups: ConfigGroup[] = [
     },
   },
   {
+    id: 'world:netease-music:memory', owner, schema: {
+      type: 'object', title: '记录与位置', description: '记忆可以放在同步盘或移动硬盘里，公司与家里接同一份；换位置不会丢本机旧记录。',
+      properties: {
+        'worlds.netease-music.memoryDir': { type: 'string', title: '记忆保存位置', description: '留空＝跟着这台机器。填一个 OneDrive、坚果云、NAS 或移动硬盘里的文件夹，公司和家里就是同一份记忆（听过什么、单曲笔记、听感标签、口味档案、想听清单）。当前播放状态与歌词缓存不写这里。换位置后写入走新目录，读取仍会把本机旧目录一起读；目录不可用时会退回本机并在「数据一览」说明原因。' },
+        'worlds.netease-music.soulEnabled': { type: 'boolean', title: '允许她写口味档案', description: '开启后，她可以在音乐记忆目录里写自己的 `music-soul.md`（第一人称、整篇读进系统提示词）。只支持追加与删除，不能整篇覆写。', 'x-hot': true },
+        'worlds.netease-music.relayPick': { type: 'boolean', title: '接力点歌', description: '她递出去的那首快结束时，提醒一次下一首（最多连 6 首）；同一首只提醒一次。需要她先用 music_pick 记下这一棒。', 'x-hot': true },
+      },
+    },
+  },
+  {
     id: 'world:netease-music:reader', owner, schema: {
       type: 'object', title: '媒体读取', description: '只列出官方支持的音乐软件；顺序靠前优先读取，不能添加其他软件。修改后需重启 World。',
       properties: {
@@ -209,7 +226,8 @@ export function normalizeConfigPatch(values: Record<string, unknown>): Partial<M
     if (!prop) continue;
     if (prop.type === 'boolean') { patch[key] = raw === true; continue; }
     if (prop.type === 'string') {
-      patch[key] = String(raw ?? '');
+      const value = String(raw ?? '');
+      patch[key] = key === 'memoryDir' ? value.trim().slice(0, 300) : value;
       continue;
     }
     if (prop.type === 'array') {

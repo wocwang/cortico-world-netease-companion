@@ -209,6 +209,35 @@ export default {
               },
             };
           }
+          if (field.key === 'memoryDir') {
+            const wrap = ui.h('div');
+            wrap.style.display = 'flex';
+            wrap.style.gap = '6px';
+            wrap.style.alignItems = 'center';
+            const input = ui.input({
+              type: 'text',
+              value: field.value == null ? '' : String(field.value),
+              onChange: changed,
+            });
+            input.style.flex = '1';
+            input.placeholder = zh ? '留空＝跟本机；填同步盘文件夹' : 'Empty = local; or a synced folder';
+            const pick = ui.button(zh ? '选择文件夹' : 'Choose folder', { size: 'sm', onClick: async () => {
+              try {
+                const picked = await ctx.pickPath({
+                  kind: 'directory',
+                  title: zh ? '选择记忆保存位置' : 'Choose memory folder',
+                  currentPath: input.value.trim() || undefined,
+                });
+                if (!picked) return;
+                input.value = picked;
+                changed();
+              } catch (e) {
+                invalid(e instanceof Error ? e.message : String(e));
+              }
+            } });
+            wrap.append(input, pick);
+            return { node: wrap, read: () => input.value.trim() };
+          }
           if (field.type === 'string') {
             const input = ui.input({
               type: 'text',
@@ -1352,6 +1381,7 @@ export default {
         const ui = ctx.ui;
         const zh = String(ctx.language ?? 'zh').startsWith('zh');
         const info = ui.h('div', 'tdesc', zh ? '正在统计本机数据文件…' : 'Reading local data files…');
+        const memoryLine = ui.h('div', 'tdesc', zh ? '正在读取记忆位置…' : 'Reading memory location…');
         const summary = ui.h('div');
         const table = ui.table({
           head: zh ? ['文件', '内容', '大小', '位置'] : ['File', 'Content', 'Size', 'Location'],
@@ -1361,9 +1391,9 @@ export default {
         const note = ui.msgline('');
         const refresh = ui.button(zh ? '刷新' : 'Refresh', { size: 'sm', onClick: () => void load() });
         bar.append(ui.h('span', 'grow'), refresh);
-        ctx.root.append(info, summary, table.el, bar, ui.h('div', 'tdesc', zh
-          ? '只读展示，不提供清除。只有「听歌记录」会被「数据清理」按保留天数删除；偏好、口味快照、单曲笔记与听感标签只存很小的文本，不参与清理。'
-          : 'Read-only; nothing here clears data. Only the listening log is pruned by Data cleanup; preferences, taste snapshot, notes and tags are tiny text files and are never cleaned.'), note);
+        ctx.root.append(info, memoryLine, summary, table.el, bar, ui.h('div', 'tdesc', zh
+          ? '只读展示，不提供清除。只有「听歌记录」会被「数据清理」按保留天数删除；口味档案、想听清单、偏好、口味快照、单曲笔记与听感标签只存很小的文本，不参与清理。'
+          : 'Read-only; nothing here clears data. Only the listening log is pruned by Data cleanup; the taste file, wish list, preferences, taste snapshot, notes and tags are tiny text files and are never cleaned.'), note);
 
         const size = bytes => {
           if (bytes === null || bytes === undefined) return '—';
@@ -1384,6 +1414,14 @@ export default {
             info.textContent = zh
               ? `本插件在本机共 ${s.files.length} 个数据文件 · ${size(s.totalBytes)} · 更新于 ${new Date().toLocaleTimeString()}`
               : `${s.files.length} local data files · ${size(s.totalBytes)} · updated ${new Date().toLocaleTimeString()}`;
+            const memory = s.memory || {};
+            memoryLine.classList.toggle('bad', !!memory.problem);
+            const kind = memory.custom
+              ? (zh ? '自定义目录，可跨机器共用' : 'custom folder, shared across machines')
+              : (zh ? '本机默认' : 'local default');
+            memoryLine.textContent = `${zh ? '记忆位置' : 'Memory location'}：${memory.dir || '—'}（${kind}）`
+              + (memory.problem ? ` · ${memory.problem}` : '')
+              + (memory.fallback ? ` · ${zh ? '刚才有一次没写进自定义目录，已回落到本机' : 'one write fell back to local'}` : '');
             summary.replaceChildren(ui.statgrid([
               { k: zh ? '合计占用' : 'Total size', v: size(s.totalBytes), accent: true },
               { k: zh ? '数据文件' : 'Data files', v: s.files.length, unit: zh ? '个' : 'files' },

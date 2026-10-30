@@ -2,11 +2,12 @@
  * 本机听歌记忆：按歌名、歌手、专辑聚合出现次数，并维护歌曲/歌手排名。
  * 独立文件 dataDir/netease-companion/listening.json，不写入人格、会话或其他插件的记忆。
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StoragePart } from 'cortico/core/types.ts';
 import type { Track } from './state.ts';
+import { dirValue, readDirs, readJsonVariants, writeTextWithFallback, type DirRef } from './storage.ts';
 
 export interface ListeningLimits { tracks: number; artists: number; rankTracks?: number; rankArtists?: number }
 export interface ResolvedListeningLimits { tracks: number; artists: number; rankTracks: number; rankArtists: number }
@@ -168,6 +169,125 @@ function validDay(value: unknown): value is ListeningDay {
     && Array.isArray(day.tracks) && Array.isArray(day.artists) && Array.isArray(day.hours) && Array.isArray(day.players);
 }
 
+const emptyData = (): Data => ({ totalPlays: 0, tracks: [], artists: [], days: [] });
+
+/** 把磁盘上的一份 JSON 收敛成合法数据；字段缺失或越界一律丢弃，不让异常文件拖慢界面。 */
+function asData(raw: Record<string, unknown> | null | undefined): Data {
+  const value = raw && typeof raw === 'object' ? raw : {};
+  const tracks = (Array.isArray(value.tracks) ? value.tracks.filter(validTrack) : [])
+    .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+    .slice(0, ABSOLUTE_MAX_TRACKS);
+  const artists = (Array.isArray(value.artists) ? value.artists.filter(validArtist) : [])
+    .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+    .slice(0, ABSOLUTE_MAX_ARTISTS);
+  return {
+    totalPlays: Number.isFinite(value.totalPlays) ? Math.max(0, Math.floor(value.totalPlays as number)) : 0,
+    tracks,
+    artists,
+    days: (Array.isArray(value.days) ? value.days.filter(validDay) : [])
+      .sort((a, b) => a.date.localeCompare(b.date)),
+  };
+}
+
+const cloneDay = (day: ListeningDay): ListeningDay => ({
+  date: day.date,
+  plays: day.plays,
+  tracks: day.tracks.map(track => ({
+    title: track.title, artist: track.artist, album: track.album,
+    count: track.count, lastAt: track.lastAt,
+    ...(track.players ? { players: track.players.map(player => ({ ...player })) } : {}),
+  })),
+  artists: day.artists.map(artist => ({ ...artist })),
+  hours: [...day.hours],
+  players: day.players.map(player => ({ ...player })),
+});
+
+/** 同一天在两处都写过时逐项相加：切换目录那天本机与同步盘各写了一段，加起来才是全量。 */
+function mergeDay(target: ListeningDay, source: ListeningDay): void {
+  target.plays += source.plays;
+  for (let hour = 0; hour < 24; ++hour)
+    target.hours[hour] = (target.hours[hour] ?? 0) + (source.hours[hour] ?? 0);
+  for (const track of source.tracks) {
+    const trackKey = key(track.title, track.artist, track.album);
+    const found = target.tracks.find(item => key(item.title, item.artist, item.album) === trackKey);
+    if (!found) {
+      target.tracks.push({
+        title: track.title, artist: track.artist, album: track.album, count: track.count, lastAt: track.lastAt,
+        ...(track.players ? { players: track.players.map(player => ({ ...player })) } : {}),
+      });
+      continue;
+    }
+    found.count += track.count;
+    if (track.lastAt > found.lastAt) found.lastAt = track.lastAt;
+    for (const player of track.players ?? []) {
+      const foundPlayer = found.players?.find(item => item.app === player.app);
+      if (foundPlayer) foundPlayer.count += player.count;
+      else (found.players ??= []).push({ ...player });
+    }
+  }
+  for (const artist of source.artists) {
+    const found = target.artists.find(item => norm(item.name) === norm(artist.name));
+    if (found) {
+      found.count += artist.count;
+      if (artist.lastAt > found.lastAt) found.lastAt = artist.lastAt;
+    } else target.artists.push({ ...artist });
+  }
+  for (const player of source.players) {
+    const found = target.players.find(item => item.app === player.app);
+    if (found) found.count += player.count;
+    else target.players.push({ ...player });
+  }
+  target.tracks.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+  target.artists.sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt));
+  target.players.sort((a, b) => b.count - a.count);
+  target.tracks = target.tracks.slice(0, MAX_TRACKS_PER_DAY);
+  target.artists = target.artists.slice(0, MAX_ARTISTS_PER_DAY);
+}
+
+/** 合并当前目录与本机旧目录。只有一处时保持原样，避免每次读取都重建对象。 */
+function mergeData(parts: Data[]): Data {
+  if (parts.length === 0) return emptyData();
+  if (parts.length === 1) return parts[0];
+  const tracks = new Map<string, ListeningTrack>();
+  const artists = new Map<string, ListeningArtist>();
+  const days = new Map<string, ListeningDay>();
+  let totalPlays = 0;
+  for (const part of parts) {
+    totalPlays += part.totalPlays;
+    for (const track of part.tracks) {
+      const trackKey = key(track.title, track.artist, track.album);
+      const found = tracks.get(trackKey);
+      if (found) {
+        found.count += track.count;
+        if (track.firstAt < found.firstAt) found.firstAt = track.firstAt;
+        if (track.lastAt > found.lastAt) found.lastAt = track.lastAt;
+      } else tracks.set(trackKey, { ...track });
+    }
+    for (const artist of part.artists) {
+      const found = artists.get(norm(artist.name));
+      if (found) {
+        found.count += artist.count;
+        if (artist.lastAt > found.lastAt) found.lastAt = artist.lastAt;
+      } else artists.set(norm(artist.name), { ...artist });
+    }
+    for (const day of part.days) {
+      const found = days.get(day.date);
+      if (found) mergeDay(found, day);
+      else days.set(day.date, cloneDay(day));
+    }
+  }
+  return {
+    totalPlays,
+    tracks: [...tracks.values()]
+      .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+      .slice(0, ABSOLUTE_MAX_TRACKS),
+    artists: [...artists.values()]
+      .sort((a, b) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
+      .slice(0, ABSOLUTE_MAX_ARTISTS),
+    days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
+  };
+}
+
 /**
  * 单曲循环计数：优先用 SMTC 播放位置从结尾回到开头的跳变；
  * 没有位置时按播放中的实际时间累计，每满一个曲目时长记一次。
@@ -220,11 +340,15 @@ export class ReplayCounter {
 export class ListeningMemoryStore {
   private data: Data | null = null;
   private chain: Promise<void> = Promise.resolve();
-  constructor(private dir: string,
+  private local?: DirRef;
+  constructor(private dir: DirRef,
     private limits: () => ListeningLimits = () => ({ tracks: 100, artists: 30 }),
     private random: () => number = Math.random) {}
 
-  get file(): string { return join(this.dir, 'listening.json'); }
+  /** 换目录后本机旧记录仍要读得到：写入走 dir，读取把 local 一起合并。 */
+  useLocal(dir: DirRef): this { this.local = dir; return this; }
+
+  get file(): string { return join(dirValue(this.dir), 'listening.json'); }
 
   private limitsNow(): ResolvedListeningLimits {
     const raw = this.limits();
@@ -239,38 +363,25 @@ export class ListeningMemoryStore {
 
   private async load(): Promise<Data> {
     if (this.data) return this.data;
-    let data: Data;
-    try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8'));
-      const tracks = (Array.isArray(raw?.tracks) ? raw.tracks.filter(validTrack) : [])
-        .sort((a: ListeningTrack, b: ListeningTrack) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
-        .slice(0, ABSOLUTE_MAX_TRACKS);
-      const artists = (Array.isArray(raw?.artists) ? raw.artists.filter(validArtist) : [])
-        .sort((a: ListeningArtist, b: ListeningArtist) => b.count - a.count || b.lastAt.localeCompare(a.lastAt))
-        .slice(0, ABSOLUTE_MAX_ARTISTS);
-      data = {
-        totalPlays: Number.isFinite(raw?.totalPlays) ? Math.max(0, Math.floor(raw.totalPlays)) : 0,
-        tracks, artists,
-        days: Array.isArray(raw?.days) ? raw.days.filter(validDay).sort((a: ListeningDay, b: ListeningDay) => a.date.localeCompare(b.date)) : [],
-      };
-    } catch {
-      data = { totalPlays: 0, tracks: [], artists: [], days: [] };
-    }
+    const parts = (await readJsonVariants<Record<string, unknown>>(this.dir, this.local, 'listening.json')).map(asData);
+    let data = mergeData(parts);
     // 兼容 1.13.0 开发版拆出去的 history.json：合并后只保留 listening.json。
-    const legacy = join(this.dir, 'history.json');
-    try {
-      const parsed = JSON.parse(await readFile(legacy, 'utf8')) as { days?: unknown };
-      if (!data.days.length && Array.isArray(parsed?.days))
-        data.days = parsed.days.filter(validDay).sort((a, b) => a.date.localeCompare(b.date));
-      if (!data.totalPlays && data.days.length)
-        data.totalPlays = data.days.reduce((sum, day) => sum + day.plays, 0);
-      if (data.days.length) {
-        await this.save(data);
+    let migrated = false;
+    for (const dir of readDirs(this.dir, this.local)) {
+      const legacy = join(dir, 'history.json');
+      try {
+        const parsed = JSON.parse(await readFile(legacy, 'utf8')) as { days?: unknown };
+        if (Array.isArray(parsed?.days)) {
+          data = mergeData([data, asData({ days: parsed.days })]);
+          migrated = true;
+        }
         await rm(legacy, { force: true });
+      } catch {
+        // 没有旧文件或旧文件损坏时不迁移。
       }
-    } catch {
-      // 没有旧文件或旧文件损坏时不迁移。
     }
+    if (!data.totalPlays && data.days.length) data.totalPlays = data.days.reduce((sum, day) => sum + day.plays, 0);
+    if (migrated && data.days.length) await this.save(data);
     this.data = data;
     return data;
   }
@@ -625,13 +736,11 @@ export class ListeningMemoryStore {
   }
 
   private async save(data: Data): Promise<void> {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({
-      version: 2, updatedAt: new Date().toISOString(), totalPlays: data.totalPlays,
-      tracks: data.tracks, artists: data.artists, days: data.days,
-    }, null, 2), 'utf8');
-    await rename(tmp, this.file);
+    await writeTextWithFallback(dirValue(this.dir), this.local ? dirValue(this.local) : '', 'listening.json',
+      JSON.stringify({
+        version: 2, updatedAt: new Date().toISOString(), totalPlays: data.totalPlays,
+        tracks: data.tracks, artists: data.artists, days: data.days,
+      }, null, 2));
     this.data = data;
   }
 
