@@ -31,8 +31,8 @@ const definition: WorldDefinition<MusicConfig> = {
       music_comment_preference: { zh: '记录用户明确表达过的评论口味与主动互动频率，写入本插件独立的画像文件。', en: 'Record an explicit comment-style preference or interaction cadence in this plugin\'s own profile file.' },
     }),
     events: [{ type: 'netease-music.comment_opportunity', description: {
-      zh: '曲目稳定且满足评论间隔时，提供一次可选的陪听评论机会；按开关附带评论区摘录、歌手资料、用户画像与听歌记忆。事件带本次评论侧重 commentFocus；分段时还附带按播放比例估的段落与当前段歌词窗口，副歌可能带 style 动作建议。',
-      en: 'An optional commentary opportunity after track settling and cooldown, with comments, artist context, user profile and listening memory when enabled. It carries a commentFocus angle; segmented opportunities also carry an estimated song section, a lyric window around the current position, and style-based action suggestions in the chorus.',
+      zh: '曲目稳定且满足评论间隔时，提供一次可选的陪听评论机会；按开关附带评论区摘录、歌手资料、用户画像与听歌记忆。事件带本次评论侧重 commentFocus；分段时还附带按播放比例估的段落与当前段歌词窗口，副歌可能带 style 情绪倾向（只给 label，不列动作名；动作词以桌宠环境提示词为准）。',
+      en: 'An optional commentary opportunity after track settling and cooldown, with comments, artist context, user profile and listening memory when enabled. It carries a commentFocus angle; segmented opportunities also carry an estimated song section and a lyric window around the current position, and the chorus may carry a style tendency (label only, no action names; the pet\'s own environment prompt provides the action vocabulary).',
     } }, { type: 'netease-music.comment_requested', description: {
       zh: '曲目与评论外部数据入队后，内部机制请求桌宠检查当前曲目并主动发言。',
       en: 'An internal mechanism cue to check current music and speak after external metadata is queued.',

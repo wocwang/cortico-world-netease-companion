@@ -322,7 +322,9 @@ test('新增播放控制与搜歌工具，默认不执行控制', async () => {
   assert.equal(vars['music.segmentCount'], '2');
   assert.equal(vars['music.actionHints'], '开启');
   assert.equal(vars['music.controlAllowed'], '关闭');
-  assert.equal(typeof vars['music.actionVocab'], 'string');
+  assert.equal(typeof vars['music.actionHints'], 'string');
+  // 动作词表改由桌宠自己的环境提示词提供，World 不再读取形象文件。
+  assert.equal(vars['music.actionVocab'], undefined);
 });
 
 test('解析媒体快照时保留播放位置、曲目时长与播放器能力', () => {

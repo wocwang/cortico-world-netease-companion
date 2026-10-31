@@ -312,7 +312,6 @@ test('副歌分段事件带 section、动作建议与语音提示', async () => 
       lyrics: async () => ({ status: 'unavailable' }),
     };
     const world = new MusicWorld(cfg, () => {}, undefined, comments as any);
-    (world as any).actionVocabCache = { figure: 'whale', expressions: ['开心'], motions: ['点头', '跳舞'] };
     const events: Array<Record<string, any>> = [];
     (world as any).host = {
       pushEvent: async (event: Record<string, any>) => { events.push(event); return { cursor: events.length }; },
@@ -341,10 +340,13 @@ test('副歌分段事件带 section、动作建议与语音提示', async () => 
     assert.equal(payload.phase, 'segment');
     assert.equal(payload.section?.id, 'chorus');
     assert.equal(payload.segment?.positionSeconds, 100);
-    assert.ok(payload.style?.actions.includes('跳舞'));
+    assert.equal(payload.style?.id, 'energetic');
+    assert.equal(payload.style?.label, '偏燃');
+    assert.equal('actions' in (payload.style ?? {}), false);
     const cue = events.find(event => event.type === 'netease-music.comment_requested')!;
     assert.match(cue.text, /sovits_speak/);
-    assert.match(cue.text, /跳舞/);
+    assert.match(cue.text, /桌宠环境提示词/);
+    assert.match(cue.text, /副歌/);
   } finally {
     Date.now = realNow;
   }

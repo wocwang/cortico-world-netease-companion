@@ -1,5 +1,12 @@
 # 更新记录
 
+## 1.18.0 - 2026-10-31
+
+- 响应官方认证审核：删除 `src/action-vocab.ts`，不再从 Coopanion 安装目录向上查找、也不读 `data/home/companion/config.json` 与桌宠包里的 `figure.json`。动作/表情词表改由桌宠自己的环境提示词提供，World 只给情绪倾向，不列举具体动作名。
+- 副歌 `style` 只保留 `id`、`label`、`estimated`、`source`，不再带 `actions`；提示词删掉 `music.actionVocab` 变量，改为要求动作词以桌宠环境提示词为准、没有合适词就不写。实时状态的「动作提示」不再显示形象动作数量。
+- 按维护者复核，从 `cortico.tags` 删除 `sensitive-data` 与 `unofficial-api`：本扩展只读五款白名单播放器的媒体会话元数据，窗口标题也只在这些进程上取；调用的公开接口都不带登录态。
+- 版本升至 1.18.0。
+
 ## 1.17.1 - 2026-10-30
 
 - 新增应用图标 `assets/icon.png`（512×512，圆角透明背景），并在 `cortico.icon` 声明；市场详情页与列表从此有图标。

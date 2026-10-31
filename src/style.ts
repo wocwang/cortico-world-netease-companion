@@ -1,16 +1,20 @@
+/**
+ * 副歌情绪倾向：只用于提示"这一段可以怎么反应"，不是确定曲风。
+ *
+ * 这里不再列出具体动作名。动作/表情词表属于桌宠自己的环境提示词（当前形象切了就换），
+ * World 不读取桌宠的安装文件，也不替它决定可用的动作。
+ */
 import type { SongBackground } from './comments.ts';
 import type { TagFeel } from './tags.ts';
 
 export type SongStyle = 'energetic' | 'soft' | 'old' | 'odd' | 'neutral';
 export type StyleSource = 'tag' | 'inferred';
 
-/** 副歌动作建议：风格只用于选动作，不是确定曲风。 */
 export interface ChorusStyle {
   id: SongStyle;
   label: string;
   estimated: boolean;
   source: StyleSource;
-  actions: string[];
 }
 
 const LABELS: Record<SongStyle, string> = {
@@ -28,16 +32,8 @@ const KEYWORDS: Record<Exclude<SongStyle, 'neutral'>, string[]> = {
     'spoken word', '朗诵'],
 };
 
-const ACTION_PREFS: Record<SongStyle, string[]> = {
-  energetic: ['跳舞', '小跳', '跳', '点头'],
-  soft: ['点头', '坐下'],
-  old: ['点头', '转圈'],
-  odd: ['张望', '摇头'],
-  neutral: ['点头', '坐下'],
-};
-
 /** 从歌曲百科的曲风/标签/BPM 粗分风格；没有数据时按中性处理。 */
-export function styleOf(background: SongBackground | undefined, availableMotions: readonly string[]): ChorusStyle {
+export function styleOf(background: SongBackground | undefined): ChorusStyle {
   const wiki = background?.status === 'ok' ? background.wiki : undefined;
   const text = [...(wiki?.genres ?? []), ...(wiki?.tags ?? [])].join(' ').toLowerCase();
   const scores: Record<Exclude<SongStyle, 'neutral'>, number> = { energetic: 0, soft: 0, old: 0, odd: 0 };
@@ -49,8 +45,7 @@ export function styleOf(background: SongBackground | undefined, availableMotions
   const best = (Object.keys(scores) as Array<Exclude<SongStyle, 'neutral'>>)
     .sort((a, b) => scores[b] - scores[a])[0];
   const id: SongStyle = scores[best] > 0 ? best : 'neutral';
-  const available = new Set(availableMotions);
-  return { id, label: LABELS[id], estimated: true, source: 'inferred', actions: ACTION_PREFS[id].filter(name => available.has(name)) };
+  return { id, label: LABELS[id], estimated: true, source: 'inferred' };
 }
 
 const FEEL_TO_STYLE: Record<TagFeel, SongStyle> = {
@@ -58,12 +53,11 @@ const FEEL_TO_STYLE: Record<TagFeel, SongStyle> = {
 };
 
 /** 用之前标过的听感覆盖自动推断；genre 只作为提示词里的短标签。 */
-export function styleFromTag(feel: TagFeel, genre: string | undefined, availableMotions: readonly string[]): ChorusStyle {
+export function styleFromTag(feel: TagFeel, genre: string | undefined): ChorusStyle {
   const id = FEEL_TO_STYLE[feel];
   const cleanGenre = (genre ?? '').trim();
-  const available = new Set(availableMotions);
   return {
     id, label: cleanGenre ? `${LABELS[id]}（${cleanGenre}）` : LABELS[id],
-    estimated: false, source: 'tag', actions: ACTION_PREFS[id].filter(name => available.has(name)),
+    estimated: false, source: 'tag',
   };
 }

@@ -1,6 +1,6 @@
 {
   "name": "better-cortico-world-netease-companion",
-  "version": "1.17.1",
+  "version": "1.18.0",
   "type": "module",
   "description": "和表达助手插件一起使用有奇效！读取网易云音乐、QQ 音乐、酷狗音乐、酷我音乐与 Spotify 曲目（优先 SMTC，必要时窗口标题），设置中按官方播放器优先级排序并保持切换稳定；新增读取诊断页，可查看全部会话、窗口候选与选择原因；切歌后让桌宠参考评论区、歌曲百科、歌手资料与歌词主动陪听，支持切歌报幕、同曲分段、评论侧重轮换与副歌动作建议；能记住单曲笔记、听感标签和多日听歌历史，并记录听歌排名与个人画像；可在用户明确要求时暂停/切歌，也能搜歌并给出链接。只读元数据，不采集音频，不需要 API Key。",
   "license": "MIT",
@@ -39,11 +39,9 @@
       "memory",
       "internal-state",
       "experimental",
-      "sensitive-data",
       "external-setup",
       "internet",
-      "high-cost",
-      "unofficial-api"
+      "high-cost"
     ],
     "locales": {
       "en": {
