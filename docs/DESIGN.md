@@ -28,6 +28,8 @@
 
 新增 `commentReference` 默认 true；老部署缺少此字段时也按启用处理，可在配置页关闭；`commentExcerpts` 缺省按 10 条处理。网络请求不使用桌宠或网易云的账号凭据。验证时直连网易云取得歌曲匹配与默认 10 条评论摘录，不读取评论者资料。
 
+1.18.2 修复重启后的开场重复。`start()` 会重建 `ListeningState` 与 `lastCommented`，重启时正在播放的这首因此被当成新切歌，稳定 8 秒后再触发一次 `comment_requested`。现在每次评论成功（开场或分段）都在本机 `dataDir/netease-companion/last-comment.json` 记下 `{title, artist, album, at}`；`start()` 读取该标记，`tick()` 在推事件前调用 `applyResumeComment()`：30 分钟内同一首仍在放时用新增的 `ListeningState.markOffered()` 标记为本轮已评论，只跳过开场，不改 `lastOffer`，因此切歌与分段冷却不受影响；换歌后 `update()` 照常清空 `offeredKey`，标记在每次评论后刷新。标记只写本机目录，不跟着同步盘跨机器走。
+
 1.18.1 只换应用图标。`assets/icon.png` 从作者提供的插画裁出人物主体（原图 1536×1024，裁剪 `(700,75)-(1460,835)` 的 760×760 方形后缩放到 512×512），保留鲸鱼帽、耳机、磁带、尾巴与黑胶唱片边缘；功能、标签与元数据与 1.18.0 一致。
 
 1.18.0 响应官方认证审核。删除 `src/action-vocab.ts`：它曾从 Coopanion 安装目录向上查找，并读部署的 `data/home/companion/config.json` 与桌宠包里的 `figure.json` 来取形象动作词，等于直接依赖桌宠 World 的内部文件（读不到会退回默认形象、导入形象会被第一个目录顶替、换形象也不更新）。现在动作/表情词表只来自桌宠自己的环境提示词。`style.ts` 的 `ChorusStyle` 去掉 `actions`，`styleOf` / `styleFromTag` 不再接收形象词表；`world.ts` 只在副歌给 `style{id,label,estimated,source}`，动作冷却仍以 `lastActionAt` 约束这类提示频率；`envPromptVars` 移除 `music.actionVocab`，`promptDocs` 与 `ENV_PROMPT.md` 同步改为"动作词以桌宠环境提示词为准，没有合适词就不写"。`cortico.tags` 删除 `sensitive-data` 与 `unofficial-api`：维护者复核结论是只读五款白名单播放器的媒体会话元数据、窗口标题只在白名单进程取，且调用的公开接口不带登录态。

@@ -157,4 +157,13 @@ export class ListeningState {
     while (this.recentOffers.size > 100) this.recentOffers.delete(this.recentOffers.keys().next().value!);
     return true;
   }
+  /** 重启后接续：把还在放的这首记为本轮已评论，不改全局冷却，只拦开场重复。 */
+  markOffered(t: Track, now: number): boolean {
+    if (!this.current || key(t) !== key(this.current)) return false;
+    this.offeredKey = key(t);
+    this.recentOffers.delete(key(t));
+    this.recentOffers.set(key(t), now);
+    while (this.recentOffers.size > 100) this.recentOffers.delete(this.recentOffers.keys().next().value!);
+    return true;
+  }
 }

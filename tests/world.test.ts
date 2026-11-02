@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MusicWorld } from '../src/world.ts';
 import { configGroups, defaults, matchPlayer, PLAYERS, playerOrder } from '../src/config.ts';
-import { parseCandidates, parseSnapshot } from '../src/state.ts';
+import { parseCandidates, parseSnapshot, type Track } from '../src/state.ts';
 
 test('评论与状态提示要求语音 World 同步发声', () => {
   const world = new MusicWorld(defaults(), () => {});
@@ -376,6 +376,35 @@ test('官方播放器清单、优先级归一化与匹配', () => {
   assert.equal(matchPlayer('KwMusic.exe')?.id, 'kuwo');
   assert.equal(matchPlayer('QQMusic.exe')?.id, 'qq');
   assert.equal(matchPlayer('chrome.exe'), null);
+});
+
+test('重启后同一首还在放不会补一次开场评论，换歌后照常评论并更新标记', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'netease-world-resume-'));
+  try {
+    const t0 = Date.now();
+    const world = new MusicWorld(defaults(), () => {}, undefined, {
+      get: async () => ({ status: 'disabled' }),
+      getArtist: async () => ({ status: 'unavailable' }),
+    }, dir);
+    (world as any).abort = new AbortController();
+    const track: Track = { title: '晴天', artist: '周杰伦', album: '叶惠美', app: 'cloudmusic', player: 'netease', status: 'playing', method: 'smtc' };
+    (world as any).rememberLastComment(track, t0 - 60_000);
+    (world as any).readLastComment();
+    const events: Array<Record<string, any>> = [];
+    (world as any).host = { pushEvent: async (event: Record<string, any>) => { events.push(event); return { cursor: events.length }; } };
+    (world as any).observe({ track });
+    await (world as any).tick(t0 + 9000);
+    assert.equal(events.length, 0);
+    const next: Track = { ...track, title: '起风了', artist: '买辣椒也用券', album: '起风了' };
+    (world as any).observe({ track: next });
+    await (world as any).tick(Date.now() + 9000);
+    assert.equal(events.length, 2);
+    assert.equal(events[1].type, 'netease-music.comment_requested');
+    assert.deepEqual(JSON.parse(await readFile(join(dir, 'last-comment.json'), 'utf8')).track,
+      { title: '起风了', artist: '买辣椒也用券', album: '起风了' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('配置分组只暴露官方播放器优先级，功能标签不带平台名', () => {

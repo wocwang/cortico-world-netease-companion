@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { StoragePart, ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
@@ -23,6 +25,9 @@ import { SoulStore, SOUL_SECTIONS } from './soul.ts';
 import { WantStore } from './wants.ts';
 import { importMemory, previewImport, type ImportMode } from './import.ts';
 import { PlaybackStateTracker, type PlaybackCue } from './playback-state.ts';
+
+/** 重启后这段时间内，同一首还在放就不再补一次开场评论。 */
+const RESUME_COMMENT_WINDOW_MS = 30 * 60_000;
 
 export const toolDecls: ReadonlyArray<Omit<ToolDef, 'handler'>> = [
   { name: 'music_now_playing', description: 'Read the latest locally observed music metadata and freshness. No audio is available.', tags: ['read'], parameters: { type: 'object', properties: {}, additionalProperties: false } },
@@ -98,6 +103,8 @@ export class MusicWorld implements World {
   private migrationCache?: { memory: string; done: boolean };
   private playback = new PlaybackStateTracker();
   private lastCommented?: { track: Track; at: number };
+  /** 本机上一次评论过的曲目；重启后用来接续，避免把还在放的这首当成新歌。 */
+  private resumeComment?: { title: string; artist: string; album: string; at: number };
   private lastStateAt = 0;
   private lastActionAt = 0;
   private memoryKey = '';
@@ -799,6 +806,52 @@ export class MusicWorld implements World {
       return JSON.stringify({ commentary: this.cfg.commentary });
     } }));
   }
+  /** 上一次评论过的曲目只记在本机 dataDir，不跟着同步盘跨机器走。 */
+  private lastCommentFile(): string { return this.localDir ? join(this.localDir, 'last-comment.json') : ''; }
+  private readLastComment(): void {
+    const file = this.lastCommentFile();
+    if (!file) return;
+    try {
+      const raw = JSON.parse(readFileSync(file, 'utf8')) as {
+        track?: { title?: unknown; artist?: unknown; album?: unknown }; at?: unknown;
+      };
+      const track = raw?.track;
+      if (!track || typeof track.title !== 'string' || !track.title
+        || typeof raw.at !== 'number' || !Number.isFinite(raw.at)) return;
+      this.resumeComment = {
+        title: track.title,
+        artist: typeof track.artist === 'string' ? track.artist : '',
+        album: typeof track.album === 'string' ? track.album : '',
+        at: raw.at,
+      };
+    } catch {
+      // 文件不存在或损坏：按首次启动处理。
+    }
+  }
+  private rememberLastComment(track: Track, at: number): void {
+    const file = this.lastCommentFile();
+    if (!file) return;
+    try {
+      mkdirSync(this.localDir, { recursive: true });
+      writeFileSync(file, JSON.stringify({
+        version: 1, track: { title: track.title, artist: track.artist, album: track.album }, at,
+      }), 'utf8');
+    } catch {
+      // 写盘失败不影响评论本身。
+    }
+  }
+  /** 重启后同一首还在放：标记为本轮已评论，只跳过开场，不改其他曲目的冷却。 */
+  private applyResumeComment(now: number): void {
+    const mark = this.resumeComment;
+    if (!mark) return;
+    const age = now - mark.at;
+    if (age < 0 || age > RESUME_COMMENT_WINDOW_MS) { this.resumeComment = undefined; return; }
+    const track = this.state.current;
+    if (!track || trackKey(track) !== JSON.stringify([mark.title, mark.artist, mark.album])) return;
+    this.resumeComment = undefined;
+    this.state.markOffered(track, now);
+    if (!this.lastCommented) this.lastCommented = { track, at: mark.at };
+  }
   async start(host: WorldHost): Promise<void> {
     if (this.host) return;
     this.host = host;
@@ -823,6 +876,8 @@ export class MusicWorld implements World {
     this.focusKey = '';
     this.focusUsed.clear();
     this.lastCommented = undefined;
+    this.resumeComment = undefined;
+    this.readLastComment();
     this.lastStateAt = 0;
     this.lastActionAt = 0;
     this.playback = new PlaybackStateTracker();
@@ -1066,6 +1121,7 @@ export class MusicWorld implements World {
     const host = this.host;
     if (this.retryAt - now > 30_000) this.retryAt = 0;
     if (!host || this.pending || now < this.retryAt) return;
+    this.applyResumeComment(now);
     if (this.quietNow(now)) {
       // 安静时段不推任何提示，但仍更新播放状态，避免结束后补发一条迟到的暂停/恢复。
       this.playback.update(this.state.current, now);
@@ -1191,6 +1247,7 @@ export class MusicWorld implements World {
         if (!valid()) { await this.withdrawQueued(); return; }
         this.state.commit(track, revision, now);
         this.lastCommented = { track, at: now };
+        this.rememberLastComment(track, now);
         for (let i = 0; i <= segmentIndex; ++i) this.segmentFired.add(i);
         ++this.requests;
         this.error = '';
@@ -1215,6 +1272,7 @@ export class MusicWorld implements World {
       if (!valid()) { await this.withdrawQueued(); return; }
       this.state.commit(track, revision, now);
       this.lastCommented = { track, at: now };
+      this.rememberLastComment(track, now);
       ++this.requests;
       this.error = '';
     } catch (e) {
