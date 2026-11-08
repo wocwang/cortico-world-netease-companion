@@ -82,11 +82,11 @@ test('webUi 提供实时状态面板与快照', async () => {
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
   assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback']);
-  assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
-  assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify');
+  assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
+  assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify,apple');
   const diagnostics = await web.invoke!('reader-diagnostics', 'snapshot', []) as any;
   assert.equal(diagnostics.status, 'ok');
-  assert.deepEqual(diagnostics.priority.map((item: any) => item.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
+  assert.deepEqual(diagnostics.priority.map((item: any) => item.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.equal(diagnostics.current, null);
   assert.equal(diagnostics.reader.running, false);
   assert.deepEqual(diagnostics.reader.sessions, []);
@@ -118,7 +118,7 @@ test('设置面板直接持久化配置并校验范围', async () => {
   assert.equal(cfg.actionHints, false);
   assert.equal(cfg.allowPlaybackControl, true);
   assert.equal(cfg.stateComments, false);
-  assert.deepEqual(cfg.playerPriority, ['spotify', 'netease', 'qq', 'kugou', 'kuwo']);
+  assert.deepEqual(cfg.playerPriority, ['spotify', 'netease', 'qq', 'kugou', 'kuwo', 'apple']);
   assert.equal((cfg as any).unknown, undefined);
   await assert.rejects(web.invoke!('settings', 'save', [{ cooldownSeconds: 5 }]), /不能小于/);
   await assert.rejects(web.invoke!('settings', 'save', [{ playerPriority: 'netease' }]), /不是有效列表/);
@@ -367,11 +367,13 @@ test('解析读取候选并过滤无效项', () => {
 });
 
 test('官方播放器清单、优先级归一化与匹配', () => {
-  assert.deepEqual(PLAYERS.map(player => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
-  assert.deepEqual(playerOrder(undefined), ['netease', 'qq', 'kugou', 'kuwo', 'spotify']);
-  assert.deepEqual(playerOrder(['spotify', 'qq', 'spotify', 'unknown']), ['spotify', 'qq', 'netease', 'kugou', 'kuwo']);
+  assert.deepEqual(PLAYERS.map(player => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
+  assert.deepEqual(playerOrder(undefined), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
+  assert.deepEqual(playerOrder(['spotify', 'qq', 'spotify', 'unknown']), ['spotify', 'qq', 'netease', 'kugou', 'kuwo', 'apple']);
   assert.equal(matchPlayer('Spotify.exe')?.id, 'spotify');
   assert.equal(matchPlayer('SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify')?.id, 'spotify');
+  assert.equal(matchPlayer('AppleInc.AppleMusicWin_nzyj5cx40ttqa!App')?.id, 'apple');
+  assert.equal(matchPlayer('AppleMusic.exe')?.id, 'apple');
   assert.equal(matchPlayer('KuGou.exe')?.id, 'kugou');
   assert.equal(matchPlayer('KwMusic.exe')?.id, 'kuwo');
   assert.equal(matchPlayer('QQMusic.exe')?.id, 'qq');

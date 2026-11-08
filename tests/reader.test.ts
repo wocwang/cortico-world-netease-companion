@@ -30,7 +30,7 @@ test('读取器按优先级把官方播放器清单传给 PowerShell', async () 
   assert.equal(captured.cmd, 'powershell.exe');
   assert.match(captured.args.join(' '), /media-session\.ps1/);
   const players = JSON.parse(captured.opts.env.MUSIC_PLAYER_ORDER);
-  assert.deepEqual(players.map((item: any) => item.id), ['qq', 'netease', 'kugou', 'kuwo', 'spotify']);
+  assert.deepEqual(players.map((item: any) => item.id), ['qq', 'netease', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.ok(players.every((item: any) => item.session && item.window));
   assert.equal(captured.opts.env.MUSIC_WINDOW_FALLBACK, '1');
   assert.equal(captured.opts.env.MUSIC_SESSION_PATTERN, undefined);
@@ -96,7 +96,7 @@ test('preflight 归一化播放器优先级并补齐官方项', () => {
     cfg: { ...defaults(), playerPriority: ['spotify', 'unknown', 'spotify'] },
     persist: (patch: any) => patches.push(patch),
   } as any);
-  assert.deepEqual(patches, [{ playerPriority: ['spotify', 'netease', 'qq', 'kugou', 'kuwo'] }]);
+  assert.deepEqual(patches, [{ playerPriority: ['spotify', 'netease', 'qq', 'kugou', 'kuwo', 'apple'] }]);
   const explicit: any[] = [];
   definition.preflight!({ cfg: defaults(), persist: (patch: any) => explicit.push(patch) } as any);
   assert.deepEqual(explicit, []);

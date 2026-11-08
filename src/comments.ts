@@ -874,8 +874,8 @@ export class NeteaseComments implements CommentProvider {
     if (cached && cached.until > Date.now()) return cached.result;
     let result: LyricsReference = { status: 'unavailable', reason: '歌词读取失败' };
     let triedLrclib = false;
-    // Spotify 的英文/日文曲目在网易云经常只能匹配到翻唱；先试 LRCLIB 的同步歌词。
-    if (track.player === 'spotify') {
+    // Spotify / Apple Music 的英文/日文曲目在网易云经常只能匹配到翻唱；先试 LRCLIB 的同步歌词。
+    if (track.player === 'spotify' || track.player === 'apple') {
       triedLrclib = true;
       const first = await this.lrclibLyrics(track, signal, maxLines);
       if (first) {

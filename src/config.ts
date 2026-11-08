@@ -68,6 +68,9 @@ export const PLAYERS: readonly PlayerDef[] = [
   { id: 'spotify', label: 'Spotify', labelEn: 'Spotify', session: 'spotify', window: 'spotify', timeline: true,
     note: '通常提供完整 SMTC；评论与歌词仍按中文曲库匹配，未匹配时只做普通陪听。',
     noteEn: 'Usually exposes full SMTC; comments and lyrics still match Chinese catalogues and fall back to plain companionship when unmatched.' },
+  { id: 'apple', label: 'Apple Music', labelEn: 'Apple Music', session: 'applemusic', window: 'applemusic', timeline: true,
+    note: 'Microsoft Store 版播放时提供 SMTC 曲目、状态与播放进度；曲库与网易云匹配较差，匹配不到时只做普通陪听。',
+    noteEn: 'The Microsoft Store build exposes track, state and progress over SMTC; its catalogue matches NetEase poorly, so unmatched tracks fall back to plain companionship.' },
 ];
 const PLAYER_IDS = new Set(PLAYERS.map(player => player.id));
 /** 只保留官方播放器；去重、保持用户顺序，并把缺失项按清单顺序补到末尾。 */
@@ -139,7 +142,7 @@ const owner = 'world:netease-music' as const;
 export const configGroups: ConfigGroup[] = [
   {
     id: 'world:netease-music:commentary', owner, schema: {
-      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐、QQ 音乐、酷狗音乐、酷我音乐与 Spotify；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，其他平台独家内容可能无法匹配；搜歌会同时查询网易云与 QQ 音乐。',
+      type: 'object', title: '陪听与评论', description: '目前支持网易云音乐、QQ 音乐、酷狗音乐、酷我音乐、Spotify 与 Apple Music；评论、歌曲百科、歌手资料和歌词通过网易云数据补充，其他平台独家内容可能无法匹配；搜歌会同时查询网易云与 QQ 音乐。',
       properties: {
         'worlds.netease-music.commentary': { type: 'boolean', title: '允许切歌评论', 'x-hot': true },
         'worlds.netease-music.announceTracks': { type: 'boolean', title: '切歌报幕', description: '新歌稳定后先用半句自然报出歌名/歌手，再说感受；信息缺失或不确定时不硬报。', 'x-hot': true },

@@ -42,7 +42,8 @@ $apps = @(
     @{ id = 'qq'; name = 'QQ Music'; installed = $false; running = $false; version = ''; path = '' },
     @{ id = 'kugou'; name = 'Kugou Music'; installed = $false; running = $false; version = ''; path = '' },
     @{ id = 'kuwo'; name = 'Kuwo Music'; installed = $false; running = $false; version = ''; path = '' },
-    @{ id = 'spotify'; name = 'Spotify'; installed = $false; running = $false; version = ''; path = '' }
+    @{ id = 'spotify'; name = 'Spotify'; installed = $false; running = $false; version = ''; path = '' },
+    @{ id = 'apple'; name = 'Apple Music'; installed = $false; running = $false; version = ''; path = '' }
 )
 
 # DisplayName regexes use .NET \u escapes so this file stays ASCII.
@@ -51,7 +52,8 @@ $displayNames = @(
     @{ index = 1; regex = 'QQ\u97f3\u4e50' },
     @{ index = 2; regex = '\u9177\u72d7\u97f3\u4e50' },
     @{ index = 3; regex = '\u9177\u6211\u97f3\u4e50' },
-    @{ index = 4; regex = '^Spotify' }
+    @{ index = 4; regex = '^Spotify' },
+    @{ index = 5; regex = '^Apple Music' }
 )
 $uninstallRoots = @(
     'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -77,7 +79,8 @@ $processPatterns = @(
     @{ index = 1; regex = 'QQMusic' },
     @{ index = 2; regex = 'KuGou' },
     @{ index = 3; regex = 'kwmusic|Kuwo' },
-    @{ index = 4; regex = '^Spotify' }
+    @{ index = 4; regex = '^Spotify' },
+    @{ index = 5; regex = 'AppleMusic' }
 )
 foreach ($pattern in $processPatterns) {
     if (@($processNames | Where-Object { $_ -match $pattern.regex }).Count -gt 0) { $apps[$pattern.index].running = $true }
@@ -88,13 +91,23 @@ $installPaths = @(
     @{ index = 1; paths = @("$env:LOCALAPPDATA\Tencent\QQMusic") },
     @{ index = 2; paths = @("$env:ProgramFiles\KuGou", "${env:ProgramFiles(x86)}\KuGou") },
     @{ index = 3; paths = @("$env:ProgramFiles\Kuwo", "${env:ProgramFiles(x86)}\Kuwo") },
-    @{ index = 4; paths = @("$env:APPDATA\Spotify\Spotify.exe", "$env:LOCALAPPDATA\Microsoft\WindowsApps\Spotify.exe") }
+    @{ index = 4; paths = @("$env:APPDATA\Spotify\Spotify.exe", "$env:LOCALAPPDATA\Microsoft\WindowsApps\Spotify.exe") },
+    @{ index = 5; paths = @("$env:LOCALAPPDATA\Microsoft\WindowsApps\AppleMusic.exe") }
 )
 foreach ($check in $installPaths) {
     if ($apps[$check.index].installed) { continue }
     foreach ($path in $check.paths) {
         if ($path -and (Test-Path $path)) { $apps[$check.index].installed = $true; break }
     }
+}
+
+# Apple Music ships as an MSIX package and may not appear in the uninstall registry.
+if (-not $apps[5].installed) {
+    try {
+        if (@(Get-AppxPackage -Name 'AppleInc.AppleMusicWin*' -ErrorAction SilentlyContinue).Count -gt 0) {
+            $apps[5].installed = $true
+        }
+    } catch {}
 }
 
 @{ sessions = $sessions; apps = $apps; error = $errorText } | ConvertTo-Json -Compress -Depth 6

@@ -1,5 +1,12 @@
 # 更新记录
 
+## 1.19.0 - 2026-11-08
+
+- 新增 Apple Music（Microsoft Store / Windows 版）支持：按 SMTC 会话 `AppleInc.AppleMusicWin_*` 读取曲目、播放状态与播放进度，默认排在 Spotify 之后；旧 `playerPriority` 会自动把新播放器补到末尾，不打乱现有顺序。
+- 「连接检查」加入 Apple Music 的安装与运行识别（MSIX 包通过 `Get-AppxPackage` 判定）；窗口标题降级会排除裸标题「Apple Music」。
+- Apple Music 曲目与 Spotify 一样优先查 LRCLIB 同步歌词，再回退网易云；匹配不到时只做普通陪听。
+- 新增 Apple Music AUMID 与进程名匹配的回归测试；版本升至 1.19.0。
+
 ## 1.18.2 - 2026-11-02
 
 - 修复重启 Coopanion 后当前歌曲被再评论一遍：每次评论后把曲目与时间写进本机 `last-comment.json`；启动时若同一首（歌名/歌手/专辑一致）仍在播放且 30 分钟内评论过，只跳过这次开场，不同曲目照常评论，分段陪听不受影响。

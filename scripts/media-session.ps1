@@ -109,7 +109,7 @@ while ($true) {
             $player = $processes | Where-Object {
                 $matcher.regex.IsMatch($_.ProcessName) -and
                 ($_.MainWindowTitle -match '\S.*\s[-\u2013\u2014]\s.*\S' -or $_.MainWindowTitle -match '[\u4e00-\u9fff][-\u2013\u2014][\u4e00-\u9fff]') -and
-                $_.MainWindowTitle -notmatch '^(\u7f51\u6613\u4e91\u97f3\u4e50|NetEase Cloud Music|QQ\u97f3\u4e50|Spotify)$'
+                $_.MainWindowTitle -notmatch '^(\u7f51\u6613\u4e91\u97f3\u4e50|NetEase Cloud Music|QQ\u97f3\u4e50|Spotify|Apple Music)$'
             } | Select-Object -First 1
             if ($null -ne $player) {
                 $windowCandidates += @{ app = $player.ProcessName; player = $matcher.id; title = $player.MainWindowTitle }
