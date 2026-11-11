@@ -112,11 +112,13 @@ test('读取器：通用识别会话参与选择，关闭时只出现在诊断�
     return result;
   };
 
-  const on = await run(defaults());
+  const on = await run({ ...defaults(), autoDetect: true });
   assert.equal(on.track?.player, 'auto:vutronmusic');
   assert.deepEqual(on.invalid, []);
 
-  const off = await run({ ...defaults(), autoDetect: false });
+  // 默认关闭：未保存的未知播放器不参与，但会话照常上报。
+  const off = await run(defaults());
+  assert.equal(defaults().autoDetect, false);
   assert.equal(off.track, null);
   // auto:<短名> 是合法标识，关闭开关不是「无法识别」，不该报警。
   assert.deepEqual(off.invalid, []);
@@ -168,4 +170,11 @@ test('preflight 归一化播放器优先级并补齐官方项', () => {
     persist: (patch: any) => removed.push(patch),
   } as any);
   assert.deepEqual(removed, [{ playerPriority: ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple'] }]);
+  // 旧配置没有 autoDetect 时按新默认（关闭）补齐；已有显式值不改。
+  const legacy: any[] = [];
+  definition.preflight!({ cfg: { ...defaults(), autoDetect: undefined }, persist: (patch: any) => legacy.push(patch) } as any);
+  assert.deepEqual(legacy, [{ autoDetect: false }]);
+  const explicitOff: any[] = [];
+  definition.preflight!({ cfg: { ...defaults(), autoDetect: true }, persist: (patch: any) => explicitOff.push(patch) } as any);
+  assert.deepEqual(explicitOff, []);
 });

@@ -185,7 +185,7 @@ export function playerEnv(priority: string[]): string {
 }
 export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
-  playerPriority: PLAYERS.map(player => player.id), windowFallback: true, autoDetect: true,
+  playerPriority: PLAYERS.map(player => player.id), windowFallback: true, autoDetect: false,
   autoBlacklist: DEFAULT_AUTO_BLACKLIST, customPlayers: [],
   commentReference: true, maxCommentChars: 80,
   commentExcerpts: 10, announceTracks: true, segmentComments: false, segmentCount: 2, segmentEverySeconds: 60,
@@ -293,11 +293,11 @@ export const configGroups: ConfigGroup[] = [
   },
   {
     id: 'world:netease-music:reader', owner, schema: {
-      type: 'object', title: '媒体读取', description: '官方播放器按优先级读取；开启通用识别后，其他向系统媒体控件上报会话的播放器也能参与陪听。修改后需重启 World。',
+      type: 'object', title: '媒体读取', description: '官方播放器按优先级读取；开启通用识别（默认关闭）后，其他向系统媒体控件上报会话的播放器也能参与陪听。修改后需重启 World。',
       properties: {
         'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '官方支持的音乐软件与已保存的软件，用拖动或上移/下移调整顺序，靠前的优先读取；官方项不能删除，已保存的软件可到「连接检查」取消保存。新保存的软件会先追加到末尾，之后按这里的顺序生效。修改后重启 World。', 'x-hot': false },
         'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
-        'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '把官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关掉后未保存的未知播放器不再参与，已保存的仍按支持播放器处理。', 'x-hot': false },
+        'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '默认关闭。开启后，官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关闭时未保存的未知播放器不参与，「连接检查」仍会列出它们的会话。', 'x-hot': false },
         'worlds.netease-music.autoBlacklist': { type: 'string', title: '通用识别黑名单（重启生效）', description: '不想让通用识别接管的软件，填应用 ID 或名称关键词（如 msteams、zoom、wemeetapp），逗号、分号或换行分隔；关键词需是完整片段，避免误伤名称相近的软件。默认已屏蔽常见会议/办公软件，可在「连接检查」一键移出。', 'x-hot': false },
       },
     },

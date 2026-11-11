@@ -14,6 +14,8 @@ const definition: WorldDefinition<MusicConfig> = {
     if (JSON.stringify(priority) !== JSON.stringify(ctx.cfg.playerPriority)) ctx.persist({ playerPriority: priority });
     const memoryDir = String(ctx.cfg.memoryDir ?? '').trim().slice(0, 300);
     if (memoryDir !== (ctx.cfg.memoryDir ?? '')) ctx.persist({ memoryDir });
+    // 旧配置可能没有这个字段：按新默认（关闭）补齐，避免残留配置被当成开启。
+    if (typeof ctx.cfg.autoDetect !== 'boolean') ctx.persist({ autoDetect: false });
   },
   create: ctx => new MusicWorld(ctx.cfg, patch => ctx.persist(patch), undefined, undefined, ctx.dataDir ? join(ctx.dataDir, 'netease-companion') : ''),
   describe: {

@@ -50,7 +50,8 @@ export class WindowsReader implements Reader {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, MUSIC_PLAYER_ORDER: playerEnv(this.cfg.playerPriority),
           MUSIC_WINDOW_FALLBACK: this.cfg.windowFallback ? '1' : '0',
-          MUSIC_AUTO_DETECT: this.cfg.autoDetect === false && customPlayerIds(this.cfg.customPlayers).length === 0 ? '0' : '1',
+          // 会话始终全量上报，开关只决定未知播放器是否参与；这样读取诊断与连接检查不受开关影响。
+          MUSIC_AUTO_DETECT: '1',
           // 保存过的清单外播放器优先上报，避免会话数量超过脚本上限时被挤掉。
           MUSIC_SAVED_APPS: parseCustomPlayers(this.cfg.customPlayers).join(';') },
       });

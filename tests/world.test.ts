@@ -469,6 +469,8 @@ test('设置里的播放器优先级包含已保存项，调整顺序后实际�
   assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple', id]);
   assert.equal(reader.players.at(-1).custom, true);
   assert.equal(reader.players.at(-1).app, 'VutronMusic.exe');
+  // 通用识别默认关闭；缺字段的旧配置由 preflight 补成关闭。
+  assert.equal(reader.fields.find((field: any) => field.key === 'autoDetect').value, false);
 
   const sessions = [
     { app: 'VutronMusic.exe', player: id, status: 'playing' as const, title: '晴天', artist: '', album: '', timeline: false },
