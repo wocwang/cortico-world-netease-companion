@@ -137,13 +137,15 @@ export default {
         const control = (group, field) => {
           const changed = () => queueSave(group);
           if (field.key === 'playerPriority') {
-            // 只读条目 + 上移/下移：不提供输入框，也不能增删官方清单之外的播放器。
+            // 官方项与已保存项都可排序；官方项不能删除，已保存项可直接取消保存。
             const players = Array.isArray(group.players) ? group.players : [];
             const nameOf = id => {
               const player = players.find(item => item.id === id);
               return player ? (zh ? player.label : player.labelEn) : id;
             };
             let order = Array.isArray(field.value) ? field.value.slice() : players.map(player => player.id);
+            // 配置可能还没跟上新保存的播放器：缺失项补到末尾，保证条目一定可见。
+            for (const player of players) if (!order.includes(player.id)) order.push(player.id);
             let dragIndex = -1;
             const node = ui.h('div');
             const move = (index, delta) => {
@@ -174,6 +176,20 @@ export default {
                 row.addEventListener('dragend', () => { dragIndex = -1; });
                 row.append(ui.pill(String(index + 1), 'plain'), ui.h('span', 'grow'), ui.h('span', '', nameOf(id)));
                 if (player && !player.timeline) row.append(ui.pill(text.noTimeline, 'plain'));
+                if (player && player.custom) {
+                  row.append(ui.pill(text.saved, 'plain'));
+                  row.append(ui.button(text.forget, {
+                    size: 'sm',
+                    onClick: async () => {
+                      try {
+                        await ctx.invoke('forget', [player.app]);
+                        await load();
+                      } catch (e) {
+                        invalid(text.saveFailed(e instanceof Error ? e.message : String(e)));
+                      }
+                    },
+                  }));
+                }
                 const up = ui.button(text.moveUp, { size: 'sm', onClick: () => move(index, -1) });
                 const down = ui.button(text.moveDown, { size: 'sm', onClick: () => move(index, 1) });
                 up.disabled = index === 0;

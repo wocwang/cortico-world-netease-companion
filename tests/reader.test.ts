@@ -137,6 +137,9 @@ test('读取器：保存的播放器在关闭通用识别时仍会注入自动�
   reader.start(() => {}, () => {});
   assert.equal(captured.opts.env.MUSIC_AUTO_DETECT, '1');
   assert.equal(captured.opts.env.MUSIC_SAVED_APPS, 'VutronMusic.exe');
+  // PowerShell 只认官方播放器，auto 标识不能塞进优先级清单。
+  assert.deepEqual(JSON.parse(captured.opts.env.MUSIC_PLAYER_ORDER).map((item: any) => item.id),
+    ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   await reader.stop();
 });
 
@@ -150,4 +153,19 @@ test('preflight 归一化播放器优先级并补齐官方项', () => {
   const explicit: any[] = [];
   definition.preflight!({ cfg: defaults(), persist: (patch: any) => explicit.push(patch) } as any);
   assert.deepEqual(explicit, []);
+  // 已保存项留在原位置，官方缺项补齐；取消保存后从优先级里清掉。
+  const withCustom: any[] = [];
+  definition.preflight!({
+    cfg: { ...defaults(), playerPriority: ['netease', 'auto:vutronmusic'], customPlayers: ['VutronMusic.exe'] },
+    persist: (patch: any) => withCustom.push(patch),
+  } as any);
+  assert.deepEqual(withCustom, [{
+    playerPriority: ['netease', 'auto:vutronmusic', 'qq', 'kugou', 'kuwo', 'spotify', 'apple'],
+  }]);
+  const removed: any[] = [];
+  definition.preflight!({
+    cfg: { ...defaults(), playerPriority: ['netease', 'auto:vutronmusic'], customPlayers: [] },
+    persist: (patch: any) => removed.push(patch),
+  } as any);
+  assert.deepEqual(removed, [{ playerPriority: ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple'] }]);
 });

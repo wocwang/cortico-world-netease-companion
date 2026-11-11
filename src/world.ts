@@ -431,15 +431,26 @@ export class MusicWorld implements World {
     return {
       groups: configGroups.map(group => {
         const kind = group.id.slice(group.id.lastIndexOf(':') + 1);
+        const players = kind === 'reader'
+          ? [
+            ...PLAYERS.map(player => ({
+              id: player.id, label: player.label, labelEn: player.labelEn,
+              note: player.note, noteEn: player.noteEn, timeline: player.timeline,
+            })),
+            ...parseCustomPlayers(this.cfg.customPlayers).map(app => ({
+              id: autoPlayerId(app), app, label: autoLabel(app), labelEn: autoLabel(app),
+              note: '从「连接检查」保存的播放器，按通用的系统媒体会话读取；可取消保存。',
+              noteEn: 'Saved from Connection check; read through its system media session. You can unsave it there.',
+              timeline: false, custom: true,
+            })),
+          ]
+          : null;
         return {
           id: group.id,
           kind,
           title: group.schema.title,
           description: group.schema.description ?? '',
-          ...(kind === 'reader' ? { players: PLAYERS.map(player => ({
-            id: player.id, label: player.label, labelEn: player.labelEn,
-            note: player.note, noteEn: player.noteEn, timeline: player.timeline,
-          })) } : {}),
+          ...(players ? { players } : {}),
           fields: Object.entries(group.schema.properties).map(([path, prop]) => {
             const key = path.slice(prefix.length);
             return {
@@ -522,7 +533,7 @@ export class MusicWorld implements World {
       return { apps: [], sessions: [], error: error instanceof Error ? error.message : String(error) };
     }
   }
-  /** 「连接检查」里保存一个清单外播放器：追加到已支持列表末尾，并顺带解除同名黑名单。 */
+  /** 「连接检查」里保存一个清单外播放器：追加到优先级末尾，并顺带解除同名黑名单。 */
   private saveCustomPlayer(value: unknown): unknown {
     const app = String(value ?? '').trim();
     if (!app) throw new Error('缺少应用 ID');
@@ -532,21 +543,24 @@ export class MusicWorld implements World {
     if (!exists && current.length >= 20) throw new Error('最多保存 20 个播放器');
     if (!exists) current.push(app);
     const customPlayers = parseCustomPlayers(current);
+    const playerPriority = playerOrder(this.cfg.playerPriority, customPlayerIds(customPlayers));
     const autoBlacklist = parseAutoBlacklist(this.cfg.autoBlacklist)
       .filter(token => !isBlacklistedApp(app, [token])).join(', ');
-    this.persist({ customPlayers, autoBlacklist });
+    this.persist({ customPlayers, playerPriority, autoBlacklist });
     // 读取器启动时才会注入通用识别环境变量；保存后重启一次，关闭开关时也能立即生效。
     void this.restartReader();
-    return { status: 'ok', customPlayers, autoBlacklist };
+    return { status: 'ok', customPlayers, playerPriority, autoBlacklist };
   }
-  /** 取消保存：只移出已支持列表，不影响官方优先级。 */
+  /** 取消保存：只移出已支持列表与优先级，回到普通未知播放器；不改黑名单。 */
   private forgetCustomPlayer(value: unknown): unknown {
-    const id = autoPlayerId(String(value ?? '').trim());
+    const app = String(value ?? '').trim();
+    const id = autoPlayerId(app);
     const customPlayers = parseCustomPlayers(this.cfg.customPlayers)
       .filter(item => autoPlayerId(item) !== id);
-    this.persist({ customPlayers });
+    const playerPriority = playerOrder(this.cfg.playerPriority, customPlayerIds(customPlayers));
+    this.persist({ customPlayers, playerPriority });
     void this.restartReader();
-    return { status: 'ok', customPlayers };
+    return { status: 'ok', customPlayers, playerPriority };
   }
   /** 把某个应用从黑名单里放出来；只删除能匹配到它的关键词。 */
   private unblockCustomPlayer(value: unknown): unknown {
@@ -559,15 +573,15 @@ export class MusicWorld implements World {
   }
   /** 「读取诊断」页用：当前读取器看到的全部候选、选择结果与配置优先级。 */
   private readerDiagnostics(): unknown {
-    const official = playerOrder(this.cfg.playerPriority).map(id => {
-      const player = PLAYERS.find(item => item.id === id)!;
-      return { id, label: player.label, labelEn: player.labelEn, timeline: player.timeline };
+    const saved = parseCustomPlayers(this.cfg.customPlayers).map(app => ({
+      id: autoPlayerId(app), app, label: autoLabel(app),
+    }));
+    const priority = playerOrder(this.cfg.playerPriority, saved.map(item => item.id)).map(id => {
+      const player = PLAYERS.find(item => item.id === id);
+      if (player) return { id, label: player.label, labelEn: player.labelEn, timeline: player.timeline };
+      const custom = saved.find(item => item.id === id);
+      return { id, label: custom?.label ?? id, labelEn: custom?.label ?? id, timeline: false, custom: true };
     });
-    const saved = parseCustomPlayers(this.cfg.customPlayers).map(app => {
-      const id = autoPlayerId(app);
-      return { id, label: autoLabel(app), labelEn: autoLabel(app), timeline: false, custom: true };
-    }).filter(item => !official.some(entry => entry.id === item.id));
-    const priority = [...official, ...saved];
     const diagnostics: ReaderDiagnostics | null = this.reader.diagnostics?.() ?? null;
     return {
       status: 'ok',
@@ -640,7 +654,8 @@ export class MusicWorld implements World {
         if (panel === 'settings' && method === 'save') {
           const patch = args[0];
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('设置参数无效');
-          const normalized = normalizeConfigPatch(patch as Record<string, unknown>);
+          const normalized = normalizeConfigPatch(patch as Record<string, unknown>,
+            { saved: customPlayerIds(this.cfg.customPlayers) });
           if (Object.keys(normalized).length) {
             this.persist(normalized);
             // 改记忆位置后立刻尝试迁一次本机旧记忆，不用等下次启动。
@@ -648,6 +663,7 @@ export class MusicWorld implements World {
           }
           return { result: 'saved' };
         }
+        if (panel === 'settings' && method === 'forget') return this.forgetCustomPlayer(args?.[0]);
         if (panel === 'settings') throw new Error('未知的设置请求');
         if (panel === 'listening-ranking' && method === 'snapshot') {
           if (!this.listening) return { status: 'unavailable', totalPlays: 0, storedTracks: 0, storedArtists: 0, limits: { tracks: 0, artists: 0, rankTracks: 0, rankArtists: 0 }, tracks: [], artists: [] };

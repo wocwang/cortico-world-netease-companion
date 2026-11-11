@@ -68,8 +68,8 @@ export class TrackSelector {
     windows: readonly WindowCandidate[],
     auto: AutoOptions = { enabled: false, blacklist: [] },
   ): Selection | null {
-    const priority = playerOrder(priorityInput);
-    // 已保存的未知播放器按已支持对待，追加在六个官方项之后，不打乱官方顺序。
+    // 已保存的未知播放器按已支持对待，位次由设置里的播放器优先级决定；未列出的自动补到末尾。
+    const priority = playerOrder(priorityInput, auto.saved);
     const saved = [...new Set((auto.saved ?? []).filter(id => isAutoPlayer(id) && !priority.includes(id)))];
     const rank = new Map([...priority, ...saved].map((id, index) => [id, index]));
     // 未知播放器统一排在所有已知项之后；名次兜底成最大值，不会取到 undefined。

@@ -76,7 +76,8 @@ export class WindowsReader implements Reader {
             this.latest = candidates;
             this.latestError = candidates.error ?? '';
             const saved = customPlayerIds(this.cfg.customPlayers);
-            const allowed = new Set([...playerOrder(this.cfg.playerPriority), ...saved]);
+            // 保存项的顺序跟设置里的播放器优先级走，不再固定排在官方之后。
+            const allowed = new Set([...playerOrder(this.cfg.playerPriority, saved), ...saved]);
             const autoOn = this.cfg.autoDetect !== false;
             // auto:<短名> 是通用识别的正常标识，参与与否由开关和保存项决定，不算「无法识别」。
             this.latestInvalid = [...new Set(

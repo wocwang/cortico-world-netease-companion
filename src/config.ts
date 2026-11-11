@@ -81,15 +81,19 @@ export const PLAYERS: readonly PlayerDef[] = [
     noteEn: 'The Microsoft Store build exposes track, state and progress over SMTC; its catalogue matches NetEase poorly, so unmatched tracks fall back to plain companionship.' },
 ];
 const PLAYER_IDS = new Set(PLAYERS.map(player => player.id));
-/** 只保留官方播放器；去重、保持用户顺序，并把缺失项按清单顺序补到末尾。 */
-export function playerOrder(value: unknown): string[] {
+/** 官方播放器 + 已保存播放器的有效顺序：去重、保留用户顺序，缺失项补到末尾。 */
+export function playerOrder(value: unknown, saved: readonly string[] = []): string[] {
+  const custom = saved.filter(id => isAutoPlayer(id));
+  const allowed = new Set([...PLAYER_IDS, ...custom]);
   const ids = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
   const seen = new Set<string>();
   const ordered: string[] = [];
   for (const id of ids) {
-    if (PLAYER_IDS.has(id) && !seen.has(id)) { seen.add(id); ordered.push(id); }
+    if (allowed.has(id) && !seen.has(id)) { seen.add(id); ordered.push(id); }
   }
-  for (const player of PLAYERS) if (!seen.has(player.id)) ordered.push(player.id);
+  for (const player of PLAYERS) if (!seen.has(player.id)) { seen.add(player.id); ordered.push(player.id); }
+  // 新保存的播放器默认追加到末尾，之后由用户排序决定；删除后不再出现在这里。
+  for (const id of custom) if (!seen.has(id)) { seen.add(id); ordered.push(id); }
   return ordered;
 }
 /** 把 SMTC 应用名解析成官方播放器；不认识的应用返回 null。 */
@@ -172,9 +176,9 @@ export function customPlayerIds(value: unknown): string[] {
 export function isInternationalPlayer(id: string | undefined): boolean {
   return PLAYERS.some(player => player.id === id && player.international === true);
 }
-/** 读取脚本的环境变量：按顺序交给 PowerShell，由它决定会话优先级。 */
+/** 读取脚本的环境变量：只把官方播放器按顺序交给 PowerShell。 */
 export function playerEnv(priority: string[]): string {
-  return JSON.stringify(playerOrder(priority).map(id => {
+  return JSON.stringify(playerOrder(priority).filter(id => PLAYER_IDS.has(id)).map(id => {
     const player = PLAYERS.find(item => item.id === id)!;
     return { id: player.id, session: player.session, window: player.window };
   }));
@@ -291,7 +295,7 @@ export const configGroups: ConfigGroup[] = [
     id: 'world:netease-music:reader', owner, schema: {
       type: 'object', title: '媒体读取', description: '官方播放器按优先级读取；开启通用识别后，其他向系统媒体控件上报会话的播放器也能参与陪听。修改后需重启 World。',
       properties: {
-        'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '官方支持的音乐软件，用上移/下移调整顺序，靠前的优先读取；在「连接检查」保存的软件会自动排在官方播放器之后。修改后重启 World。', 'x-hot': false },
+        'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '官方支持的音乐软件与已保存的软件，用拖动或上移/下移调整顺序，靠前的优先读取；官方项不能删除，已保存的软件可到「连接检查」取消保存。新保存的软件会先追加到末尾，之后按这里的顺序生效。修改后重启 World。', 'x-hot': false },
         'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
         'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '把官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关掉后未保存的未知播放器不再参与，已保存的仍按支持播放器处理。', 'x-hot': false },
         'worlds.netease-music.autoBlacklist': { type: 'string', title: '通用识别黑名单（重启生效）', description: '不想让通用识别接管的软件，填应用 ID 或名称关键词（如 msteams、zoom、wemeetapp），逗号、分号或换行分隔；关键词需是完整片段，避免误伤名称相近的软件。默认已屏蔽常见会议/办公软件，可在「连接检查」一键移出。', 'x-hot': false },
@@ -307,7 +311,7 @@ for (const group of configGroups)
     SETTINGS_FIELDS.set(path.slice(CONFIG_PREFIX.length), prop);
 
 /** 设置页不再经过宿主配置页；保存前按同一份分组声明校验类型、范围与正则。 */
-export function normalizeConfigPatch(values: Record<string, unknown>): Partial<MusicConfig> {
+export function normalizeConfigPatch(values: Record<string, unknown>, options: { saved?: readonly string[] } = {}): Partial<MusicConfig> {
   const patch: Record<string, unknown> = {};
   for (const [key, raw] of Object.entries(values)) {
     const prop = SETTINGS_FIELDS.get(key);
@@ -321,7 +325,7 @@ export function normalizeConfigPatch(values: Record<string, unknown>): Partial<M
     }
     if (prop.type === 'array') {
       if (!Array.isArray(raw)) throw new Error(`「${prop.title}」不是有效列表`);
-      patch[key] = playerOrder(raw);
+      patch[key] = playerOrder(raw, options.saved);
       continue;
     }
     if (prop.type === 'integer' || prop.type === 'number') {

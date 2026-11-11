@@ -93,6 +93,28 @@ test('通用识别：保存后的未知播放器按已支持对待，暂停也�
   assert.equal(new TrackSelector().select(priority, [foo, session('qq')], [], saved)?.player, 'qq');
 });
 
+test('通用识别：保存项按播放器优先级参与，可排在官方之前或之间', () => {
+  const vutron = autoPlayerId('VutronMusic.exe');
+  const saved = [vutron];
+  const vutronSession = session(vutron, { app: 'VutronMusic.exe' });
+  const options = { enabled: true, blacklist: [] as string[], saved };
+  // 保存项在默认末尾时，官方在播优先。
+  assert.equal(new TrackSelector().select(['netease', 'qq'], [vutronSession, session('netease')], [], options)?.player, 'netease');
+  // 用户把它拖到最前，选择结果跟着变。
+  assert.equal(new TrackSelector().select([vutron, 'netease', 'qq'], [vutronSession, session('netease')], [], options)?.player, vutron);
+  // 排在 qq 与 kuwo 之间时按该位次生效。
+  assert.equal(new TrackSelector().select(['netease', 'qq', vutron, 'kugou'], [vutronSession, session('kugou')], [], options)?.player, vutron);
+});
+
+test('通用识别：两个保存项的先后由优先级决定', () => {
+  const a = autoPlayerId('PlayerA.exe');
+  const b = autoPlayerId('PlayerB.exe');
+  const sessions = [session(a, { app: 'PlayerA.exe' }), session(b, { app: 'PlayerB.exe' })];
+  const options = { enabled: true, blacklist: [] as string[], saved: [a, b] };
+  assert.equal(new TrackSelector().select([a, b], sessions, [], options)?.player, a);
+  assert.equal(new TrackSelector().select([b, a], sessions, [], options)?.player, b);
+});
+
 test('通用识别：黑名单关键词按完整片段匹配，不同发行版也能命中', () => {
   const teams = session(autoPlayerId('MSTeams_8wekyb3d8bbwe!MSTeams'), { app: 'MSTeams_8wekyb3d8bbwe!MSTeams' });
   const blocked = { enabled: true, blacklist: ['msteams'] };

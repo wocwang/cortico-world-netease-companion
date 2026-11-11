@@ -1,18 +1,19 @@
 import { join } from 'node:path';
 import { describeTools, type WorldDefinition } from 'cortico/world.ts';
-import { defaults, parseCustomPlayers, playerOrder, type MusicConfig } from './config.ts';
+import { defaults, customPlayerIds, parseCustomPlayers, playerOrder, type MusicConfig } from './config.ts';
 import { MusicWorld, toolDecls } from './world.ts';
 
 const definition: WorldDefinition<MusicConfig> = {
   id: 'netease-music', label: '听搭子', defaults,
   preflight(ctx) {
     if (process.platform !== 'win32') throw new Error('此版本需要 Windows 10 1809+ / Windows 11');
-    const priority = playerOrder(ctx.cfg.playerPriority);
+    const customPlayers = parseCustomPlayers(ctx.cfg.customPlayers);
+    if (JSON.stringify(customPlayers) !== JSON.stringify(ctx.cfg.customPlayers ?? [])) ctx.persist({ customPlayers });
+    // 优先级只保留官方项与仍然保存着的自定义项；旧配置自动补齐，删除后不留残项。
+    const priority = playerOrder(ctx.cfg.playerPriority, customPlayerIds(customPlayers));
     if (JSON.stringify(priority) !== JSON.stringify(ctx.cfg.playerPriority)) ctx.persist({ playerPriority: priority });
     const memoryDir = String(ctx.cfg.memoryDir ?? '').trim().slice(0, 300);
     if (memoryDir !== (ctx.cfg.memoryDir ?? '')) ctx.persist({ memoryDir });
-    const customPlayers = parseCustomPlayers(ctx.cfg.customPlayers);
-    if (JSON.stringify(customPlayers) !== JSON.stringify(ctx.cfg.customPlayers ?? [])) ctx.persist({ customPlayers });
   },
   create: ctx => new MusicWorld(ctx.cfg, patch => ctx.persist(patch), undefined, undefined, ctx.dataDir ? join(ctx.dataDir, 'netease-companion') : ''),
   describe: {

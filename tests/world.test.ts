@@ -374,6 +374,14 @@ test('官方播放器清单、优先级归一化与匹配', () => {
   assert.deepEqual(PLAYERS.map(player => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.deepEqual(playerOrder(undefined), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.deepEqual(playerOrder(['spotify', 'qq', 'spotify', 'unknown']), ['spotify', 'qq', 'netease', 'kugou', 'kuwo', 'apple']);
+  // 已保存的播放器进入优先级：保留用户排的位置，旧配置缺项补末尾，删除后不留残项。
+  const custom = 'auto:vutronmusic';
+  assert.deepEqual(playerOrder(['netease', custom, 'qq'], [custom]),
+    ['netease', custom, 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
+  assert.deepEqual(playerOrder(['netease', 'qq'], [custom]),
+    ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple', custom]);
+  assert.deepEqual(playerOrder([custom, 'netease', 'qq'], []),
+    ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.equal(matchPlayer('Spotify.exe')?.id, 'spotify');
   assert.equal(matchPlayer('SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify')?.id, 'spotify');
   assert.equal(matchPlayer('AppleInc.AppleMusicWin_nzyj5cx40ttqa!App')?.id, 'apple');
@@ -426,13 +434,57 @@ test('连接检查保存/取消保存未知播放器并解除同名黑名单', (
   (world as any).saveCustomPlayer('VutronMusic.exe');
   assert.deepEqual(cfg.customPlayers, ['VutronMusic.exe']);
   assert.equal(cfg.autoBlacklist, 'msteams, teams');
+  assert.equal(cfg.playerPriority.at(-1), 'auto:vutronmusic');
   (world as any).saveCustomPlayer('VutronMusic.exe');
   assert.deepEqual(cfg.customPlayers, ['VutronMusic.exe']);
   (world as any).forgetCustomPlayer('VutronMusic.exe');
   assert.deepEqual(cfg.customPlayers, []);
+  // 取消保存只清支持列表与优先级，不写黑名单。
+  assert.ok(!cfg.playerPriority.includes('auto:vutronmusic'));
+  assert.equal(cfg.playerPriority.length, 6);
+  assert.equal(cfg.autoBlacklist, 'msteams, teams');
+  // 回到普通未知播放器：没有已知项在播时，按通用识别照常参与。
+  assert.equal(new TrackSelector().select(cfg.playerPriority, [{
+    app: 'VutronMusic.exe', player: 'auto:vutronmusic', status: 'playing',
+    title: '晴天', artist: '', album: '', timeline: false,
+  }], [], {
+    enabled: true, blacklist: parseAutoBlacklist(cfg.autoBlacklist), saved: customPlayerIds(cfg.customPlayers),
+  })?.player, 'auto:vutronmusic');
   // 一键移出只删除能匹配到该应用的词，别的黑名单项保留。
   (world as any).unblockCustomPlayer('MSTeams_8wekyb3d8bbwe!MSTeams');
   assert.equal(cfg.autoBlacklist, 'teams');
+});
+
+test('设置里的播放器优先级包含已保存项，调整顺序后实际选择随之变化', async () => {
+  const id = 'auto:vutronmusic';
+  const cfg = {
+    ...defaults(),
+    customPlayers: ['VutronMusic.exe'],
+    playerPriority: ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple', id],
+  };
+  const world = new MusicWorld(cfg, patch => Object.assign(cfg, patch));
+  const web = world.webUi();
+  const settings = await web.invoke!('settings', 'read', []) as any;
+  const reader = settings.groups.find((group: any) => group.kind === 'reader');
+  assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple', id]);
+  assert.equal(reader.players.at(-1).custom, true);
+  assert.equal(reader.players.at(-1).app, 'VutronMusic.exe');
+
+  const sessions = [
+    { app: 'VutronMusic.exe', player: id, status: 'playing' as const, title: '晴天', artist: '', album: '', timeline: false },
+    { app: 'cloudmusic.exe', player: 'netease', status: 'playing' as const, title: '晴天', artist: '', album: '', timeline: false },
+  ];
+  const pick = () => new TrackSelector().select(cfg.playerPriority, sessions, [], {
+    enabled: true, blacklist: [], saved: customPlayerIds(cfg.customPlayers),
+  })?.player;
+  assert.equal(pick(), 'netease');
+  // 把保存项拖到最前，选择结果立即跟着变。
+  await web.invoke!('settings', 'save', [{ playerPriority: [id, 'netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple'] }]);
+  assert.equal(cfg.playerPriority[0], id);
+  assert.equal(pick(), id);
+  // 官方项仍然一个不少，只调整相对顺序。
+  await web.invoke!('settings', 'save', [{ playerPriority: ['qq'] }]);
+  assert.deepEqual(cfg.playerPriority, ['qq', 'netease', 'kugou', 'kuwo', 'spotify', 'apple', id]);
 });
 
 test('连接检查：保存项持久化、去重，最多 20 个', () => {
