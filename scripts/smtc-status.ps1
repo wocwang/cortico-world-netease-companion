@@ -22,8 +22,11 @@ try {
     $propsType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties, Windows.Media.Control, ContentType = WindowsRuntime]
     $manager = Await-WinRT ($managerType::RequestAsync()) $managerType
     foreach ($session in $manager.GetSessions()) {
-        $playback = $session.GetPlaybackInfo().PlaybackStatus.ToString()
+        $info = $session.GetPlaybackInfo()
+        $playback = $info.PlaybackStatus.ToString()
         if ($playback -eq 'Closed') { continue }
+        $type = ''
+        try { $type = [string]$info.PlaybackType } catch {}
         $title = ''
         $artist = ''
         try {
@@ -31,7 +34,7 @@ try {
             $title = $props.Title
             $artist = $props.Artist
         } catch {}
-        $sessions += @{ app = $session.SourceAppUserModelId; status = $playback; title = $title; artist = $artist }
+        $sessions += @{ app = $session.SourceAppUserModelId; status = $playback; type = $type; title = $title; artist = $artist }
     }
 } catch {
     $errorText = $_.Exception.Message

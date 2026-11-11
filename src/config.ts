@@ -7,6 +7,12 @@ export interface MusicConfig {
   cooldownSeconds: number;
   playerPriority: string[];
   windowFallback: boolean;
+  /** 通用识别：SMTC 里有会话、但不在官方清单里的播放器也参与陪听。 */
+  autoDetect: boolean;
+  /** 通用识别的黑名单；换行或逗号分隔，可填应用 ID 或 auto: 后面的名字。 */
+  autoBlacklist: string;
+  /** 用户从「连接检查」保存的清单外播放器；按保存顺序排在官方播放器之后。 */
+  customPlayers: string[];
   commentReference: boolean;
   maxCommentChars: number;
   commentExcerpts: number;
@@ -47,6 +53,8 @@ export interface PlayerDef {
   window: string;
   /** 播放器是否提供播放位置与时长；没有时分段陪听只能按已播放时间估算。 */
   timeline: boolean;
+  /** 曲库以国际/英文为主：歌词优先查 LRCLIB 而不是网易云。 */
+  international?: boolean;
   note: string;
   noteEn: string;
 }
@@ -65,10 +73,10 @@ export const PLAYERS: readonly PlayerDef[] = [
   { id: 'kuwo', label: '酷我音乐', labelEn: 'Kuwo Music', session: 'kuwo|kwmusic', window: 'kwmusic|kuwo', timeline: false,
     note: '媒体会话不稳定，通常退回窗口标题读取，只能取「歌名 - 歌手」；无法确认暂停与播放进度。',
     noteEn: 'Media sessions are unreliable, so it usually falls back to the window title, which only yields "title - artist" and cannot confirm pause or progress.' },
-  { id: 'spotify', label: 'Spotify', labelEn: 'Spotify', session: 'spotify', window: 'spotify', timeline: true,
+  { id: 'spotify', label: 'Spotify', labelEn: 'Spotify', session: 'spotify', window: 'spotify', timeline: true, international: true,
     note: '通常提供完整 SMTC；评论与歌词仍按中文曲库匹配，未匹配时只做普通陪听。',
     noteEn: 'Usually exposes full SMTC; comments and lyrics still match Chinese catalogues and fall back to plain companionship when unmatched.' },
-  { id: 'apple', label: 'Apple Music', labelEn: 'Apple Music', session: 'applemusic', window: 'applemusic', timeline: true,
+  { id: 'apple', label: 'Apple Music', labelEn: 'Apple Music', session: 'applemusic', window: 'applemusic', timeline: true, international: true,
     note: 'Microsoft Store 版播放时提供 SMTC 曲目、状态与播放进度；曲库与网易云匹配较差，匹配不到时只做普通陪听。',
     noteEn: 'The Microsoft Store build exposes track, state and progress over SMTC; its catalogue matches NetEase poorly, so unmatched tracks fall back to plain companionship.' },
 ];
@@ -90,6 +98,80 @@ export function matchPlayer(appId: string): PlayerDef | null {
   for (const player of PLAYERS) if (new RegExp(player.session, 'i').test(value)) return player;
   return null;
 }
+/** 通用识别的播放器 id 前缀；后面跟由应用 ID 归一化出的短名。 */
+export const AUTO_PREFIX = 'auto:';
+/** 应用 ID → 稳定的短名：小写、去掉 .exe、非字母数字压成一个连字符。 */
+export function autoSlug(appId: string): string {
+  const value = String(appId ?? '').trim().toLowerCase()
+    .replace(/\.exe$/, '')
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return value.slice(0, 64) || 'unknown';
+}
+export function autoPlayerId(appId: string): string {
+  return `${AUTO_PREFIX}${autoSlug(appId)}`;
+}
+export function isAutoPlayer(id: string | undefined): boolean {
+  return String(id ?? '').startsWith(AUTO_PREFIX);
+}
+/** 通用识别的展示名：MSIX 取包名（`!` 前的包族名），Win32 取 exe 名。 */
+export function autoLabel(appId: string): string {
+  const value = String(appId ?? '').trim();
+  if (!value) return '未知播放器';
+  const base = value.includes('!') ? value.slice(0, value.indexOf('!')) : value.replace(/\.exe$/i, '');
+  const name = base.split('_')[0].replace(/\.exe$/i, '').trim();
+  return name || '未知播放器';
+}
+/** 通用识别黑名单：逗号 / 分号 / 空白分隔；可写应用 ID、短名或 `auto:` 短名。 */
+export function parseAutoBlacklist(value: unknown): string[] {
+  return [...new Set(String(value ?? '')
+    .split(/[\s,;，；]+/)
+    .map(item => item.trim().toLowerCase())
+    .filter(Boolean))];
+}
+export function isBlacklistedApp(appId: string, list: readonly string[]): boolean {
+  if (!list.length) return false;
+  const app = String(appId ?? '').trim().toLowerCase();
+  const slug = autoSlug(appId);
+  return list.some(item => {
+    if (!item) return false;
+    if (item === app || item === slug || item === `${AUTO_PREFIX}${slug}`) return true;
+    // 关键词按完整片段匹配，避免 teams 误伤 myteamsplayer、wecom 误伤 wecomic。
+    return keywordHit(app, item) || keywordHit(slug, item);
+  });
+}
+function keywordHit(text: string, keyword: string): boolean {
+  if (keyword.length < 3) return false;
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
+}
+/** 默认屏蔽的会议/办公软件关键词；用连接检查的一键移出即可恢复。 */
+export const DEFAULT_AUTO_BLACKLIST =
+  'msteams, microsoftteams, teams, zoom, wemeetapp, wemeet, voov, voovmeeting, tencentmeeting, feishu, lark, dingtalk, webex, ciscocollabhost, wxwork, wecom';
+/** 用户保存的清单外播放器：去空、按 auto id 去重、保持保存顺序，最多 20 个。 */
+export function parseCustomPlayers(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of list) {
+    const app = typeof item === 'string' ? item.trim().slice(0, 200) : '';
+    if (!app) continue;
+    const id = autoPlayerId(app);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(app);
+    if (result.length >= 20) break;
+  }
+  return result;
+}
+/** 把保存的应用 ID 折算成选择器使用的 auto:<短名>。 */
+export function customPlayerIds(value: unknown): string[] {
+  return parseCustomPlayers(value).map(app => autoPlayerId(app));
+}
+/** 曲库是否为国际/英文为主：歌词优先查 LRCLIB。 */
+export function isInternationalPlayer(id: string | undefined): boolean {
+  return PLAYERS.some(player => player.id === id && player.international === true);
+}
 /** 读取脚本的环境变量：按顺序交给 PowerShell，由它决定会话优先级。 */
 export function playerEnv(priority: string[]): string {
   return JSON.stringify(playerOrder(priority).map(id => {
@@ -99,7 +181,8 @@ export function playerEnv(priority: string[]): string {
 }
 export const defaults = (): MusicConfig => ({
   enabled: false, commentary: true, settleSeconds: 8, cooldownSeconds: 120,
-  playerPriority: PLAYERS.map(player => player.id), windowFallback: true,
+  playerPriority: PLAYERS.map(player => player.id), windowFallback: true, autoDetect: true,
+  autoBlacklist: DEFAULT_AUTO_BLACKLIST, customPlayers: [],
   commentReference: true, maxCommentChars: 80,
   commentExcerpts: 10, announceTracks: true, segmentComments: false, segmentCount: 2, segmentEverySeconds: 60,
   actionHints: true, actionCooldownSeconds: 90, quietHours: false, quietStart: 23, quietEnd: 7,
@@ -206,10 +289,12 @@ export const configGroups: ConfigGroup[] = [
   },
   {
     id: 'world:netease-music:reader', owner, schema: {
-      type: 'object', title: '媒体读取', description: '只列出官方支持的音乐软件；顺序靠前优先读取，不能添加其他软件。修改后需重启 World。',
+      type: 'object', title: '媒体读取', description: '官方播放器按优先级读取；开启通用识别后，其他向系统媒体控件上报会话的播放器也能参与陪听。修改后需重启 World。',
       properties: {
-        'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '只包含官方支持的音乐软件。用上移/下移调整顺序，靠前的播放器优先读取；不能增删或自行添加其他软件。修改后重启 World。', 'x-hot': false },
+        'worlds.netease-music.playerPriority': { type: 'array', title: '播放器优先级（重启生效）', description: '官方支持的音乐软件，用上移/下移调整顺序，靠前的优先读取；在「连接检查」保存的软件会自动排在官方播放器之后。修改后重启 World。', 'x-hot': false },
         'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
+        'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '把官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关掉后未保存的未知播放器不再参与，已保存的仍按支持播放器处理。', 'x-hot': false },
+        'worlds.netease-music.autoBlacklist': { type: 'string', title: '通用识别黑名单（重启生效）', description: '不想让通用识别接管的软件，填应用 ID 或名称关键词（如 msteams、zoom、wemeetapp），逗号、分号或换行分隔；关键词需是完整片段，避免误伤名称相近的软件。默认已屏蔽常见会议/办公软件，可在「连接检查」一键移出。', 'x-hot': false },
       },
     },
   },
@@ -230,7 +315,8 @@ export function normalizeConfigPatch(values: Record<string, unknown>): Partial<M
     if (prop.type === 'boolean') { patch[key] = raw === true; continue; }
     if (prop.type === 'string') {
       const value = String(raw ?? '');
-      patch[key] = key === 'memoryDir' ? value.trim().slice(0, 300) : value;
+      patch[key] = key === 'memoryDir' ? value.trim().slice(0, 300)
+        : key === 'autoBlacklist' ? value.trim().slice(0, 500) : value;
       continue;
     }
     if (prop.type === 'array') {

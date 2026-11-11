@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { playerEnv, playerOrder, type MusicConfig } from './config.ts';
+import { customPlayerIds, isAutoPlayer, parseAutoBlacklist, parseCustomPlayers, playerEnv, playerOrder, type MusicConfig } from './config.ts';
 import { TrackSelector, type Selection, type SelectorState } from './selection.ts';
 import { parseCandidates, parseSnapshot, type MediaCandidates, type SessionCandidate, type Snapshot, type WindowCandidate } from './state.ts';
 
@@ -49,7 +49,10 @@ export class WindowsReader implements Reader {
         '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('../scripts/media-session.ps1', import.meta.url))], {
         windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         env: { ...process.env, MUSIC_PLAYER_ORDER: playerEnv(this.cfg.playerPriority),
-          MUSIC_WINDOW_FALLBACK: this.cfg.windowFallback ? '1' : '0' },
+          MUSIC_WINDOW_FALLBACK: this.cfg.windowFallback ? '1' : '0',
+          MUSIC_AUTO_DETECT: this.cfg.autoDetect === false && customPlayerIds(this.cfg.customPlayers).length === 0 ? '0' : '1',
+          // 保存过的清单外播放器优先上报，避免会话数量超过脚本上限时被挤掉。
+          MUSIC_SAVED_APPS: parseCustomPlayers(this.cfg.customPlayers).join(';') },
       });
       this.running = true;
       let lineBytes = 0;
@@ -72,11 +75,17 @@ export class WindowsReader implements Reader {
             const candidates = parseCandidates(raw);
             this.latest = candidates;
             this.latestError = candidates.error ?? '';
-            const allowed = new Set(playerOrder(this.cfg.playerPriority));
+            const saved = customPlayerIds(this.cfg.customPlayers);
+            const allowed = new Set([...playerOrder(this.cfg.playerPriority), ...saved]);
+            const autoOn = this.cfg.autoDetect !== false;
+            // auto:<短名> 是通用识别的正常标识，参与与否由开关和保存项决定，不算「无法识别」。
             this.latestInvalid = [...new Set(
-              [...candidates.sessions, ...candidates.windows].map(item => item.player).filter(id => !allowed.has(id)),
+              [...candidates.sessions, ...candidates.windows].map(item => item.player)
+                .filter(id => !isAutoPlayer(id) && !allowed.has(id)),
             )];
-            this.latestSelection = this.selector.select(this.cfg.playerPriority, candidates.sessions, candidates.windows);
+            this.latestSelection = this.selector.select(this.cfg.playerPriority, candidates.sessions, candidates.windows, {
+              enabled: autoOn, blacklist: parseAutoBlacklist(this.cfg.autoBlacklist), saved,
+            });
             onSnapshot({ track: this.latestSelection?.track ?? null, error: candidates.error });
           } else {
             this.latest = { sessions: [], windows: [] };

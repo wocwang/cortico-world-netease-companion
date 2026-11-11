@@ -4,8 +4,12 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MusicWorld } from '../src/world.ts';
-import { configGroups, defaults, matchPlayer, PLAYERS, playerOrder } from '../src/config.ts';
+import {
+  autoLabel, autoPlayerId, configGroups, customPlayerIds, defaults, DEFAULT_AUTO_BLACKLIST, isAutoPlayer,
+  isBlacklistedApp, isInternationalPlayer, matchPlayer, parseAutoBlacklist, parseCustomPlayers, PLAYERS, playerOrder,
+} from '../src/config.ts';
 import { parseCandidates, parseSnapshot, type Track } from '../src/state.ts';
+import { TrackSelector } from '../src/selection.ts';
 
 test('评论与状态提示要求语音 World 同步发声', () => {
   const world = new MusicWorld(defaults(), () => {});
@@ -81,7 +85,7 @@ test('webUi 提供实时状态面板与快照', async () => {
   );
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
-  assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback']);
+  assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback', 'autoDetect', 'autoBlacklist']);
   assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify,apple');
   const diagnostics = await web.invoke!('reader-diagnostics', 'snapshot', []) as any;
@@ -374,10 +378,96 @@ test('官方播放器清单、优先级归一化与匹配', () => {
   assert.equal(matchPlayer('SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify')?.id, 'spotify');
   assert.equal(matchPlayer('AppleInc.AppleMusicWin_nzyj5cx40ttqa!App')?.id, 'apple');
   assert.equal(matchPlayer('AppleMusic.exe')?.id, 'apple');
+  // 通用识别：清单外的应用折算成 auto:<短名>，展示名取 exe 名或 MSIX 包名。
+  assert.equal(autoPlayerId('VutronMusic.exe'), 'auto:vutronmusic');
+  assert.equal(autoPlayerId('foo.bar.exe'), 'auto:foo-bar');
+  assert.equal(isAutoPlayer('auto:foo'), true);
+  assert.equal(isAutoPlayer('qq'), false);
+  assert.equal(autoLabel('VutronMusic.exe'), 'VutronMusic');
+  assert.equal(autoLabel('Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic'), 'Microsoft.ZuneMusic');
+  // 国际曲库标记不再靠枚举播放器 id。
+  assert.equal(isInternationalPlayer('spotify'), true);
+  assert.equal(isInternationalPlayer('apple'), true);
+  assert.equal(isInternationalPlayer('netease'), false);
+  assert.equal(isInternationalPlayer('auto:foo'), false);
+  assert.deepEqual(parseAutoBlacklist(' Foo.exe, auto:bar\nbaz；qux '), ['foo.exe', 'auto:bar', 'baz', 'qux']);
+  assert.equal(isBlacklistedApp('VutronMusic.exe', ['vutronmusic']), true);
+  assert.equal(isBlacklistedApp('VutronMusic.exe', ['auto:vutronmusic']), true);
+  assert.equal(isBlacklistedApp('VutronMusic.exe', ['other']), false);
+  // 默认黑名单用关键词覆盖不同发行版的会议/办公软件；关键词按完整片段匹配。
+  assert.match(DEFAULT_AUTO_BLACKLIST, /teams/);
+  assert.equal(isBlacklistedApp('MSTeams_8wekyb3d8bbwe!MSTeams', parseAutoBlacklist(DEFAULT_AUTO_BLACKLIST)), true);
+  assert.equal(isBlacklistedApp('MSTeams_8wekyb3d8bbwe!MSTeams', ['teams']), false);
+  assert.equal(isBlacklistedApp('Teams.exe', ['teams']), true);
+  assert.equal(isBlacklistedApp('Zoom.exe', ['zoom']), true);
+  // 关键词是其完整片段才命中；默认清单写的是完整产品名，缩写不会误伤也不会漏拦。
+  assert.equal(isBlacklistedApp('wemeetapp.exe', ['wemeetapp']), true);
+  assert.equal(isBlacklistedApp('wemeetapp.exe', ['wemeet']), false);
+  // 不误伤包含关键词的其它产品。
+  assert.equal(isBlacklistedApp('MyTeamsPlayer.exe', ['teams']), false);
+  assert.equal(isBlacklistedApp('WeComic.exe', ['wecom']), false);
+  // 默认黑名单只含会议/办公类，浏览器与编辑器不会被静默排除。
+  const defaultsList = parseAutoBlacklist(DEFAULT_AUTO_BLACKLIST);
+  assert.equal(isBlacklistedApp('msedge.exe', defaultsList), false);
+  assert.equal(isBlacklistedApp('ByteDance.TraeCN_zp6j6v1nqm6jc!TraeCN', defaultsList), false);
+  // 保存的播放器去重、保序，并折算成 auto:<短名>。
+  assert.deepEqual(parseCustomPlayers(['foo.exe', ' FOO.exe ', '', null, 'bar.exe']), ['foo.exe', 'bar.exe']);
+  assert.deepEqual(customPlayerIds(['foo.exe', 'bar.exe']), ['auto:foo', 'auto:bar']);
   assert.equal(matchPlayer('KuGou.exe')?.id, 'kugou');
   assert.equal(matchPlayer('KwMusic.exe')?.id, 'kuwo');
   assert.equal(matchPlayer('QQMusic.exe')?.id, 'qq');
   assert.equal(matchPlayer('chrome.exe'), null);
+});
+
+test('连接检查保存/取消保存未知播放器并解除同名黑名单', () => {
+  const cfg = defaults();
+  cfg.autoBlacklist = 'vutronmusic, msteams, teams';
+  const world = new MusicWorld(cfg, patch => Object.assign(cfg, patch));
+  (world as any).saveCustomPlayer('VutronMusic.exe');
+  assert.deepEqual(cfg.customPlayers, ['VutronMusic.exe']);
+  assert.equal(cfg.autoBlacklist, 'msteams, teams');
+  (world as any).saveCustomPlayer('VutronMusic.exe');
+  assert.deepEqual(cfg.customPlayers, ['VutronMusic.exe']);
+  (world as any).forgetCustomPlayer('VutronMusic.exe');
+  assert.deepEqual(cfg.customPlayers, []);
+  // 一键移出只删除能匹配到该应用的词，别的黑名单项保留。
+  (world as any).unblockCustomPlayer('MSTeams_8wekyb3d8bbwe!MSTeams');
+  assert.equal(cfg.autoBlacklist, 'teams');
+});
+
+test('连接检查：保存项持久化、去重，最多 20 个', () => {
+  const cfg = defaults();
+  const persisted: any[] = [];
+  const world = new MusicWorld(cfg, patch => { persisted.push(patch); Object.assign(cfg, patch); });
+  for (let i = 0; i < 20; i++) (world as any).saveCustomPlayer(`Player${i}.exe`);
+  assert.equal(cfg.customPlayers.length, 20);
+  assert.deepEqual(cfg.customPlayers.slice(0, 2), ['Player0.exe', 'Player1.exe']);
+  // 重复保存不占新名额，也不报错。
+  assert.doesNotThrow(() => (world as any).saveCustomPlayer('Player0.exe'));
+  assert.equal(cfg.customPlayers.length, 20);
+  assert.throws(() => (world as any).saveCustomPlayer('Overflow.exe'), /最多保存 20 个/);
+  assert.equal(cfg.customPlayers.length, 20);
+  // 新配置对象（模拟重启）仍能读回保存项。
+  const restored = new MusicWorld({ ...cfg }, () => {});
+  assert.deepEqual((restored as any).cfg.customPlayers, cfg.customPlayers);
+  assert.deepEqual(customPlayerIds(cfg.customPlayers).slice(0, 1), ['auto:player0']);
+  assert.ok(persisted.some(patch => Array.isArray(patch.customPlayers)));
+});
+
+test('连接检查：移出黑名单后该应用立即恢复参与选择', () => {
+  const app = 'MyTeamsPlayer.exe';
+  const cfg = { ...defaults(), autoBlacklist: 'myteamsplayer, zoom' };
+  const world = new MusicWorld(cfg, patch => Object.assign(cfg, patch));
+  const blocked = new TrackSelector().select(['netease', 'qq'], [
+    { app, player: 'auto:myteamsplayer', status: 'playing', title: '晴天', artist: '', album: '', timeline: false },
+  ], [], { enabled: true, blacklist: parseAutoBlacklist(cfg.autoBlacklist) });
+  assert.equal(blocked, null);
+  const result = (world as any).unblockCustomPlayer(app) as { autoBlacklist: string };
+  assert.equal(result.autoBlacklist, 'zoom');
+  const picked = new TrackSelector().select(['netease', 'qq'], [
+    { app, player: 'auto:myteamsplayer', status: 'playing', title: '晴天', artist: '', album: '', timeline: false },
+  ], [], { enabled: true, blacklist: parseAutoBlacklist(cfg.autoBlacklist) });
+  assert.equal(picked?.player, 'auto:myteamsplayer');
 });
 
 test('重启后同一首还在放不会补一次开场评论，换歌后照常评论并更新标记', async () => {
@@ -409,7 +499,7 @@ test('重启后同一首还在放不会补一次开场评论，换歌后照常�
   }
 });
 
-test('配置分组只暴露官方播放器优先级，功能标签不带平台名', () => {
+test('配置分组只暴露官方播放器优先级与通用识别，功能标签不带平台名', () => {
   assert.equal(new Set(configGroups.map(group => group.id)).size, configGroups.length);
   assert.ok(configGroups.length >= 5);
   for (const group of configGroups) {
@@ -418,7 +508,8 @@ test('配置分组只暴露官方播放器优先级，功能标签不带平台�
     assert.ok(group.schema.description);
   }
   const descriptions = configGroups.map(group => group.schema.description).join(' ');
-  assert.match(descriptions, /官方支持的音乐软件/);
+  assert.match(descriptions, /官方播放器按优先级读取/);
+  assert.match(descriptions, /通用识别/);
   const props = Object.assign({}, ...configGroups.map(group => group.schema.properties)) as any;
   assert.equal(props['worlds.netease-music.commentReference'].title, '参考评论区（联网）');
   assert.doesNotMatch(props['worlds.netease-music.commentReference'].title, /网易云/);
@@ -426,6 +517,8 @@ test('配置分组只暴露官方播放器优先级，功能标签不带平台�
   assert.doesNotMatch(props['worlds.netease-music.songContext'].description, /网易云/);
   assert.equal(props['worlds.netease-music.playerPriority'].type, 'array');
   assert.equal(props['worlds.netease-music.playerPriority']['x-hot'], false);
+  assert.equal(props['worlds.netease-music.autoDetect'].type, 'boolean');
+  assert.equal(props['worlds.netease-music.autoBlacklist'].type, 'string');
   assert.equal(props['worlds.netease-music.sessionPattern'], undefined);
   assert.equal(props['worlds.netease-music.windowFallbackProcess'], undefined);
 });

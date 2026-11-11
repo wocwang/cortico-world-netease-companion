@@ -308,7 +308,15 @@ export default {
           connected: zh ? 'SMTC 已连接' : 'SMTC connected',
           disconnected: zh ? '未检测到 SMTC' : 'No SMTC session',
           supported: zh ? '官方支持' : 'Supported',
+          saved: zh ? '已保存' : 'Saved',
+          auto: zh ? '通用识别' : 'Auto detected',
+          waiting: zh ? '通用识别·待命' : 'Auto detected · standby',
+          blocked: zh ? '已加入黑名单' : 'Blocked',
           unsupported: zh ? '未支持' : 'Unsupported',
+          save: zh ? '保存' : 'Save',
+          forget: zh ? '取消保存' : 'Remove',
+          unblock: zh ? '移出黑名单' : 'Unblock',
+          actions: zh ? '操作' : 'Action',
           readingNow: zh ? '正在读取' : 'Reading now',
           sessions: zh ? '当前 SMTC 会话' : 'SMTC sessions',
           sessionsDesc: zh ? 'Windows 当前暴露的媒体会话，未匹配到官方播放器时也会列在这里' : 'Media sessions Windows currently exposes, including apps outside the official players',
@@ -327,7 +335,7 @@ export default {
         const summary = ui.h('div');
         const appsHost = ui.h('div');
         const sessions = ui.table({
-          head: zh ? ['应用', '状态', '曲目', '歌手', '支持'] : ['App', 'State', 'Track', 'Artist', 'Support'],
+          head: zh ? ['应用', '状态', '曲目', '歌手', '支持', '操作'] : ['App', 'State', 'Track', 'Artist', 'Support', 'Action'],
           maxHeight: '28vh',
         });
         const sessionSection = ui.section(text.sessions, text.sessionsDesc);
@@ -385,9 +393,21 @@ export default {
             appsHost.appendChild(sheet.el);
           }
           sessions.clear(state.sessions.length ? '' : text.empty);
+          const actionCell = session => {
+            if (session.saved) return ui.button(text.forget, { size: 'sm', onClick: () => void mutate('forget', session.app) });
+            if (session.blocked) return ui.button(text.unblock, { size: 'sm', onClick: () => void mutate('unblock', session.app) });
+            if (session.savable) return ui.button(text.save, { size: 'sm', onClick: () => void mutate('save', session.app) });
+            return '-';
+          };
           for (const session of state.sessions) {
-            sessions.addRow([session.app || '-', stateLabel(session.status), session.title || '-', session.artist || '-',
-              session.supported ? text.supported : text.unsupported]);
+            const support = session.official ? text.supported
+              : session.saved ? text.saved
+                : session.blocked ? text.blocked
+                  : session.auto ? text.auto
+                    : session.waiting ? text.waiting
+                      : text.unsupported;
+            sessions.addRow([session.label || session.app || '-', stateLabel(session.status), session.title || '-', session.artist || '-',
+              support, actionCell(session)]);
           }
           if (state.error) {
             status.classList.add('bad');
@@ -403,6 +423,17 @@ export default {
           status.textContent = text.checking;
           try {
             draw(await ctx.invoke('status'));
+          } catch (e) {
+            status.classList.add('bad');
+            status.textContent = text.failed(e instanceof Error ? e.message : String(e));
+          }
+        };
+
+        const mutate = async (method, app) => {
+          if (!app) return;
+          try {
+            await ctx.invoke(method, [app]);
+            await load();
           } catch (e) {
             status.classList.add('bad');
             status.textContent = text.failed(e instanceof Error ? e.message : String(e));

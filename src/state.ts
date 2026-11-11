@@ -1,4 +1,4 @@
-import type { MusicConfig } from './config.ts';
+import { autoPlayerId, type MusicConfig } from './config.ts';
 
 export interface Track {
   title: string;
@@ -61,8 +61,9 @@ export function parseCandidates(input: unknown): MediaCandidates {
     if (!item || typeof item !== 'object') continue;
     const value = item as Record<string, unknown>;
     const title = clean(value.title);
-    const player = clean(value.player);
     const app = clean(value.app);
+    // 通用识别的会话没有官方 id，由脚本标 auto；这里统一折算成 auto:<短名>，保持 id 稳定。
+    const player = clean(value.player) || (value.auto === true && app ? autoPlayerId(app) : '');
     if (!title || !player || !app) continue;
     sessions.push({
       title, player, app,

@@ -1,5 +1,7 @@
 # Windows PowerShell 5.1; one UTF-8 JSON snapshot per two seconds.
 # Reports every official-player SMTC session and window-title candidate.
+# With MUSIC_AUTO_DETECT=1 it also reports sessions from players outside the
+# official list (Music playback type only); TypeScript decides the rest.
 # Priority and stickiness are decided in TypeScript (src/selection.ts).
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -34,6 +36,11 @@ foreach ($player in $players) {
             }
         } catch { throw 'Invalid player window regex' }
     }
+}
+
+$savedApps = @()
+if ($env:MUSIC_SAVED_APPS) {
+    $savedApps = @($env:MUSIC_SAVED_APPS -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -91,6 +98,49 @@ while ($true) {
                             if ($position -gt 0 -or $end -gt 0) { $candidate.timeline = $true }
                         } catch {}
                         $sessions += $candidate
+                    } catch { }
+                }
+            }
+            # Auto detection: report sessions outside the official list as-is;
+            # TypeScript turns them into auto:<slug>. Music only, skip video/image,
+            # and skip sessions with no title or a closed state.
+            if ($env:MUSIC_AUTO_DETECT -eq '1') {
+                $autoCount = 0
+                # Saved players are reported first so the session cap can never hide them.
+                $orderedSessions = @($allSessions | Where-Object { $savedApps -contains [string]$_.SourceAppUserModelId }) +
+                    @($allSessions | Where-Object { -not ($savedApps -contains [string]$_.SourceAppUserModelId) })
+                foreach ($session in $orderedSessions) {
+                    if ($autoCount -ge 16) { break }
+                    $appId = [string]$session.SourceAppUserModelId
+                    if (-not $appId -or $seenApps.ContainsKey($appId)) { continue }
+                    try {
+                        $info = $session.GetPlaybackInfo()
+                        $statusText = $info.PlaybackStatus.ToString()
+                        if ($statusText -eq 'Closed') { continue }
+                        $kind = [string]$info.PlaybackType
+                        if ($kind -eq 'Video' -or $kind -eq 'Image') { continue }
+                        $props = Await-WinRT ($session.TryGetMediaPropertiesAsync()) $propertiesType
+                        if (-not $props.Title) { continue }
+                        $seenApps[$appId] = $true
+                        $autoCandidate = @{
+                            app = $appId; player = ''; auto = $true; status = 'unknown';
+                            title = $props.Title; artist = $props.Artist; album = $props.AlbumTitle; timeline = $false
+                        }
+                        switch ($statusText) {
+                            'Playing' { $autoCandidate.status = 'playing' }
+                            'Paused' { $autoCandidate.status = 'paused' }
+                            'Stopped' { $autoCandidate.status = 'paused' }
+                        }
+                        try {
+                            $timeline = $session.GetTimelineProperties()
+                            $position = [double]$timeline.Position.TotalSeconds
+                            $end = [double]$timeline.EndTime.TotalSeconds
+                            $autoCandidate.positionSeconds = $position
+                            if ($end -gt 0) { $autoCandidate.durationSeconds = $end }
+                            if ($position -gt 0 -or $end -gt 0) { $autoCandidate.timeline = $true }
+                        } catch {}
+                        $sessions += $autoCandidate
+                        $autoCount++
                     } catch { }
                 }
             }

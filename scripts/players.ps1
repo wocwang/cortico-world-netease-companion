@@ -6,3 +6,16 @@ function Read-PlayerList([string]$Json) {
     $decoded = $Json | ConvertFrom-Json
     foreach ($item in $decoded) { $item }
 }
+
+# Exact app id match, tolerating an optional .exe suffix on either side.
+# Never use -like here: AUMIDs from packaged apps can contain [ * ? and would
+# be treated as wildcards, silently matching the wrong session.
+function Test-AppIdMatch([string]$Id, [string]$Want) {
+    if ([string]::IsNullOrEmpty($Id) -or [string]::IsNullOrEmpty($Want)) { return $false }
+    $id = $Id.Trim()
+    $want = $Want.Trim()
+    if ($id -eq $want) { return $true }
+    if ($id -eq "$want.exe") { return $true }
+    if ("$id.exe" -eq $want) { return $true }
+    return $false
+}

@@ -33,6 +33,8 @@ test('读取器按优先级把官方播放器清单传给 PowerShell', async () 
   assert.deepEqual(players.map((item: any) => item.id), ['qq', 'netease', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.ok(players.every((item: any) => item.session && item.window));
   assert.equal(captured.opts.env.MUSIC_WINDOW_FALLBACK, '1');
+  assert.equal(captured.opts.env.MUSIC_AUTO_DETECT, '1');
+  assert.equal(captured.opts.env.MUSIC_SAVED_APPS, '');
   assert.equal(captured.opts.env.MUSIC_SESSION_PATTERN, undefined);
   await reader.stop();
 });
@@ -87,6 +89,54 @@ test('读取器把无法识别的播放器标识记入诊断', async () => {
   assert.equal(snapshots.at(-1)?.track, null);
   assert.equal(reader.diagnostics().selection, null);
   assert.deepEqual(reader.diagnostics().invalidPlayers, ['netease qq']);
+  await reader.stop();
+});
+
+test('读取器：通用识别会话参与选择，关闭时只出现在诊断里', async () => {
+  const payload = {
+    sessions: [{ app: 'VutronMusic.exe', player: '', auto: true, status: 'playing', title: '晴天',
+      artist: '周杰伦', album: '', timeline: false }],
+    windowCandidates: [],
+  };
+  const run = async (cfg: any) => {
+    const child = new FakeChild();
+    const snapshots: any[] = [];
+    const reader = new WindowsReader(cfg, (() => child) as any,
+      { heartbeatMs: 999999, checkMs: 999999, retryMs: 999999 });
+    reader.start(snapshot => snapshots.push(snapshot), () => {});
+    await new Promise<void>(resolve => { child.stdout.write(JSON.stringify(payload) + '\n', () => resolve()); });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const result = { track: snapshots.at(-1)?.track, invalid: reader.diagnostics().invalidPlayers,
+      sessions: reader.diagnostics().sessions.map(item => item.player) };
+    await reader.stop();
+    return result;
+  };
+
+  const on = await run(defaults());
+  assert.equal(on.track?.player, 'auto:vutronmusic');
+  assert.deepEqual(on.invalid, []);
+
+  const off = await run({ ...defaults(), autoDetect: false });
+  assert.equal(off.track, null);
+  // auto:<短名> 是合法标识，关闭开关不是「无法识别」，不该报警。
+  assert.deepEqual(off.invalid, []);
+  // 但会话仍要出现在读取诊断里，方便用户确认「它确实上报了，只是被开关排除」。
+  assert.deepEqual(off.sessions, ['auto:vutronmusic']);
+
+  const saved = await run({ ...defaults(), autoDetect: false, customPlayers: ['VutronMusic.exe'] });
+  assert.equal(saved.track?.player, 'auto:vutronmusic');
+  assert.deepEqual(saved.invalid, []);
+});
+
+test('读取器：保存的播放器在关闭通用识别时仍会注入自动上报', async () => {
+  let captured: any;
+  const child = new FakeChild();
+  const reader = new WindowsReader({ ...defaults(), autoDetect: false, customPlayers: ['VutronMusic.exe'] },
+    ((cmd: string, args: string[], opts: any) => { captured = { cmd, args, opts }; return child; }) as any,
+    { heartbeatMs: 999999, checkMs: 999999, retryMs: 999999 });
+  reader.start(() => {}, () => {});
+  assert.equal(captured.opts.env.MUSIC_AUTO_DETECT, '1');
+  assert.equal(captured.opts.env.MUSIC_SAVED_APPS, 'VutronMusic.exe');
   await reader.stop();
 });
 

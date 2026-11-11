@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { StoragePart, ToolDef, World, WorldHost, WorldWebUiDecl } from 'cortico/core/types.ts';
-import { configGroups, commentLimits, lyricLimits, listeningLimits, matchPlayer, normalizeConfigPatch, PLAYERS, playerEnv, playerOrder, segmentLimits, type MusicConfig } from './config.ts';
+import {
+  autoLabel, autoPlayerId, configGroups, commentLimits, customPlayerIds, isBlacklistedApp, isAutoPlayer, lyricLimits,
+  listeningLimits, matchPlayer, normalizeConfigPatch, parseAutoBlacklist, parseCustomPlayers, PLAYERS, playerEnv,
+  playerOrder, segmentLimits, type MusicConfig,
+} from './config.ts';
 import { WindowsReader, type Reader, type ReaderDiagnostics } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
@@ -457,12 +461,47 @@ export class MusicWorld implements World {
       const text = stdout.trim();
       if (!text) return { apps: [], sessions: [], error: '没有返回检测结果' };
       const parsed = JSON.parse(text) as { apps?: unknown[]; sessions?: unknown[]; error?: unknown };
-      // Only the official list may claim support; other sessions stay visible but marked unsupported.
+      // 官方播放器直接算支持；保存过的清单外播放器也算支持；其余会话在「通用识别」开启时参与，可被黑名单排除。
+      const autoOn = this.cfg.autoDetect !== false;
+      const blacklist = parseAutoBlacklist(this.cfg.autoBlacklist);
+      const savedIds = new Set(customPlayerIds(this.cfg.customPlayers));
       const sessions = (Array.isArray(parsed.sessions) ? parsed.sessions : []).map(item => {
         const session = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
-        const player = matchPlayer(String(session.app ?? ''));
-        return { ...session, player: player?.id ?? null, supported: player !== null, label: player?.label ?? '' };
+        const app = String(session.app ?? '');
+        const player = matchPlayer(app);
+        const isAuto = player === null;
+        const saved = isAuto && savedIds.has(autoPlayerId(app));
+        const kind = String(session.type ?? '');
+        const hasTitle = Boolean(String(session.title ?? '').trim());
+        const playable = kind !== 'Video' && kind !== 'Image' && hasTitle;
+        const blocked = isAuto && !saved && isBlacklistedApp(app, blacklist);
+        const savable = isAuto && playable;
+        return {
+          ...session,
+          player: player?.id ?? (saved || savable ? autoPlayerId(app) : null),
+          official: player !== null,
+          saved,
+          blocked,
+          savable,
+          hasTitle,
+          playing: String(session.status ?? '') === 'Playing',
+          auto: false,
+          waiting: false,
+          supported: false,
+          label: player?.label ?? autoLabel(app),
+        };
       });
+      // 与选择器同一套门控：有官方/已保存的会话在播时，未保存的未知播放器只算「已识别、待命」。
+      const known = sessions.filter(item => (item.official || item.saved) && item.hasTitle);
+      const knownPlaying = known.some(item => item.playing);
+      for (const item of sessions) {
+        const eligible = autoOn && !knownPlaying && (item.playing || known.length === 0);
+        const active = item.savable && !item.saved && !item.blocked && eligible;
+        item.auto = active;
+        // 已识别但当前不接管：面板要能区分，避免和实际选择结果对不上。
+        item.waiting = item.savable && !item.saved && !item.blocked && autoOn && !active;
+        item.supported = item.official || item.saved || active || item.waiting;
+      }
       const apps = (Array.isArray(parsed.apps) ? parsed.apps : []).map(item => {
         const app = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
         const player = PLAYERS.find(entry => entry.id === app.id);
@@ -483,12 +522,52 @@ export class MusicWorld implements World {
       return { apps: [], sessions: [], error: error instanceof Error ? error.message : String(error) };
     }
   }
+  /** 「连接检查」里保存一个清单外播放器：追加到已支持列表末尾，并顺带解除同名黑名单。 */
+  private saveCustomPlayer(value: unknown): unknown {
+    const app = String(value ?? '').trim();
+    if (!app) throw new Error('缺少应用 ID');
+    const current = parseCustomPlayers(this.cfg.customPlayers);
+    const id = autoPlayerId(app);
+    const exists = current.some(item => autoPlayerId(item) === id);
+    if (!exists && current.length >= 20) throw new Error('最多保存 20 个播放器');
+    if (!exists) current.push(app);
+    const customPlayers = parseCustomPlayers(current);
+    const autoBlacklist = parseAutoBlacklist(this.cfg.autoBlacklist)
+      .filter(token => !isBlacklistedApp(app, [token])).join(', ');
+    this.persist({ customPlayers, autoBlacklist });
+    // 读取器启动时才会注入通用识别环境变量；保存后重启一次，关闭开关时也能立即生效。
+    void this.restartReader();
+    return { status: 'ok', customPlayers, autoBlacklist };
+  }
+  /** 取消保存：只移出已支持列表，不影响官方优先级。 */
+  private forgetCustomPlayer(value: unknown): unknown {
+    const id = autoPlayerId(String(value ?? '').trim());
+    const customPlayers = parseCustomPlayers(this.cfg.customPlayers)
+      .filter(item => autoPlayerId(item) !== id);
+    this.persist({ customPlayers });
+    void this.restartReader();
+    return { status: 'ok', customPlayers };
+  }
+  /** 把某个应用从黑名单里放出来；只删除能匹配到它的关键词。 */
+  private unblockCustomPlayer(value: unknown): unknown {
+    const app = String(value ?? '').trim();
+    if (!app) throw new Error('缺少应用 ID');
+    const autoBlacklist = parseAutoBlacklist(this.cfg.autoBlacklist)
+      .filter(token => !isBlacklistedApp(app, [token])).join(', ');
+    this.persist({ autoBlacklist });
+    return { status: 'ok', autoBlacklist };
+  }
   /** 「读取诊断」页用：当前读取器看到的全部候选、选择结果与配置优先级。 */
   private readerDiagnostics(): unknown {
-    const priority = playerOrder(this.cfg.playerPriority).map(id => {
+    const official = playerOrder(this.cfg.playerPriority).map(id => {
       const player = PLAYERS.find(item => item.id === id)!;
       return { id, label: player.label, labelEn: player.labelEn, timeline: player.timeline };
     });
+    const saved = parseCustomPlayers(this.cfg.customPlayers).map(app => {
+      const id = autoPlayerId(app);
+      return { id, label: autoLabel(app), labelEn: autoLabel(app), timeline: false, custom: true };
+    }).filter(item => !official.some(entry => entry.id === item.id));
+    const priority = [...official, ...saved];
     const diagnostics: ReaderDiagnostics | null = this.reader.diagnostics?.() ?? null;
     return {
       status: 'ok',
@@ -497,7 +576,8 @@ export class MusicWorld implements World {
       priority,
       current: this.state.current ? {
         ...this.state.current,
-        playerLabel: PLAYERS.find(item => item.id === this.state.current?.player)?.label ?? null,
+        playerLabel: PLAYERS.find(item => item.id === this.state.current?.player)?.label
+          ?? (isAutoPlayer(this.state.current.player) ? autoLabel(this.state.current.app) : null),
       } : null,
       observedAt: this.state.observedAt ? new Date(this.state.observedAt).toISOString() : null,
       reader: diagnostics ? {
@@ -535,6 +615,9 @@ export class MusicWorld implements World {
       ],
       invoke: async (panel, method, args) => {
         if (panel === 'connection-check' && method === 'status') return this.connectionStatus();
+        if (panel === 'connection-check' && method === 'save') return this.saveCustomPlayer(args?.[0]);
+        if (panel === 'connection-check' && method === 'forget') return this.forgetCustomPlayer(args?.[0]);
+        if (panel === 'connection-check' && method === 'unblock') return this.unblockCustomPlayer(args?.[0]);
         if (panel === 'connection-check') throw new Error('未知的连接检查请求');
         if (panel === 'reader-diagnostics' && method === 'snapshot') return this.readerDiagnostics();
         if (panel === 'reader-diagnostics' && method === 'restart') return this.restartReader();

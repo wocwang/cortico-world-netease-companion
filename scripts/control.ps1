@@ -82,8 +82,10 @@ try {
     }
   }
   # 3) Fall back to the raw app id match.
+  #    Compare exactly (with optional .exe): AUMID can contain [ * ? which -like treats as wildcards.
   if ($null -eq $selected -and $Match) {
-    $candidates = @($sessions | Where-Object { $_.SourceAppUserModelId -like "*$Match*" })
+    $want = $Match.Trim()
+    $candidates = @($sessions | Where-Object { Test-AppIdMatch ([string]$_.SourceAppUserModelId) $want })
     if ($candidates.Count -gt 0) {
       $selected = $candidates | Where-Object { "$($_.GetPlaybackInfo().PlaybackStatus)" -eq 'Playing' } | Select-Object -First 1
       if ($null -eq $selected) { $selected = $candidates[0] }
