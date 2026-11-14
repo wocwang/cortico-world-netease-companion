@@ -352,6 +352,93 @@ test('副歌分段事件带 section、动作建议与语音提示', async () => 
   }
 });
 
+test('分段事件不重发开场已给的上下文，用 reuse 指明按需读取入口', async () => {
+  const realNow = Date.now;
+  let fake = realNow();
+  Date.now = () => fake;
+  try {
+    const cfg = { ...defaults(), segmentComments: true, segmentCount: 2, cooldownSeconds: 30, settleSeconds: 2, stateComments: false };
+    const longText = '这首歌创作于 2003 年，是专辑《叶惠美》的主打之一，由周杰伦作曲，方文山作词，编曲以钢琴与弦乐为主。'.repeat(4);
+    const comments = {
+      get: async () => ({ status: 'ok', match: 'metadata',
+        excerpts: Array.from({ length: 10 }, (_, i) => ({ text: `第 ${i + 1} 条评论：这段旋律让我想起学生时代的雨天，副歌进来时特别有画面感。`,
+          kind: i < 6 ? 'hot' : 'recent', likes: 30 - i })),
+        songBackground: { status: 'ok', source: '百度百科 + 歌曲百科', title: '晴天', text: longText,
+          facts: [{ label: '所属专辑', value: '叶惠美' }, { label: '发行日期', value: '2003 年 7 月 31 日' }],
+          wiki: { genres: ['流行'], tags: ['华语', '校园'], language: '国语', bpm: 68,
+            awards: ['第 15 届金曲奖最佳作曲人'], appearances: [{ title: '不能说的秘密', year: 2007 }],
+            review: { author: '乐评人', text: '一首把青春写进雨声里的歌。' },
+            similar: [{ title: '七里香' }, { title: '简单爱' }], playlists: [{ title: '华语青春' }] } } }),
+      getArtist: async () => ({ status: 'ok', artist: { id: 1, name: '周杰伦', aliases: ['Jay Chou'],
+        bio: '华语流行歌手、作曲人，代表作横跨多个年代。'.repeat(10), musicSize: 300, albumSize: 15 },
+        works: [{ title: '七里香', album: '七里香' }, { title: '稻香', album: '魔杰座' }],
+        albums: [{ name: '叶惠美', year: 2003, company: '索尼' }],
+        background: [{ source: '百度百科', kind: 'encyclopedia', text: '华语流行乐男歌手。'.repeat(8) },
+          { source: 'Discogs', kind: 'community', text: 'Taiwanese singer-songwriter.'.repeat(8) }] }),
+      lyrics: async () => ({ status: 'unavailable' }),
+    };
+    const world = new MusicWorld(cfg, () => {}, undefined, comments as any);
+    const events: Array<Record<string, any>> = [];
+    (world as any).host = {
+      pushEvent: async (event: Record<string, any>) => { events.push(event); return { cursor: events.length }; },
+      withdrawPending: async () => true,
+    };
+    const track = media({ timeline: false, positionSeconds: 0, durationSeconds: 200 });
+    const t0 = fake;
+    (world as any).observe({ track });
+    fake = t0 + 5000;
+    (world as any).observe({ track });
+    // 断档会重新开始稳定计时：重新观察后再等 3 秒让曲目进入可评论状态。
+    fake = t0 + 20_000;
+    (world as any).observe({ track });
+    fake = t0 + 23_000;
+    (world as any).observe({ track });
+    await (world as any).tick(fake);
+
+    const openingEvent = events.filter(e => e.type === 'netease-music.comment_opportunity').at(-1);
+    assert.ok(openingEvent, `events=${events.map(e => e.type).join(',')}`);
+    const opening = JSON.parse(openingEvent.text);
+    assert.equal(opening.phase, 'opening');
+    for (const key of ['commentReference', 'artistContext', 'listeningProfile', 'profileSummary',
+      'commentPreferences', 'listeningMemory', 'songNote']) assert.ok(key in opening, key);
+
+    for (let i = 0; i < 25; ++i) { fake += 5000; (world as any).observe({ track }); }
+    await (world as any).tick(fake);
+    const snapshots = events.filter(e => e.type === 'netease-music.comment_opportunity');
+    assert.equal(snapshots.length, 2);
+    const segment = JSON.parse(snapshots.at(-1)!.text);
+    assert.equal(segment.phase, 'segment');
+    assert.equal(segment.reuse?.from, 'opening');
+    for (const key of segment.reuse.omitted as string[]) {
+      assert.equal(key in segment, false, key);
+      assert.ok(segment.reuse.read[key], key);
+    }
+    const tools = world.tools().map(tool => tool.name);
+    for (const tool of new Set(Object.values(segment.reuse.read) as string[])) assert.ok(tools.includes(tool), tool);
+    // 被省略的字段都能用 reuse.read 指向的工具取回等价内容（同一份数据）。
+    const call = async (name: string) => JSON.parse(String(await (world.tools().find(tool => tool.name === name)!.handler as any)({}, {})));
+    const playing = await call('music_now_playing');
+    for (const key of ['listeningProfile', 'profileSummary', 'listeningMemory', 'commentPreferences', 'songNote'])
+      assert.ok(key in playing, key);
+    const reference = await call('music_song_comments');
+    assert.ok(Array.isArray(reference.excerpts) && reference.songBackground?.status === 'ok');
+    const artist = await call('music_artist_context');
+    assert.ok(artist.artist?.bio && artist.works?.length && artist.albums?.length && artist.background?.length);
+
+    // 分段事件明显更小，但仍保留本次需要的段落、歌词、侧重与标签。
+    assert.ok(JSON.stringify(segment).length < JSON.stringify(opening).length * 0.5);
+    assert.ok((segment.segment?.positionSeconds ?? 0) >= 100);
+    assert.ok(segment.commentFocus);
+    assert.ok(segment.section);
+    const cue = events.filter(e => e.type === 'netease-music.comment_requested').at(-1)!;
+    assert.match(cue.text, /music_song_comments/);
+    assert.match(cue.text, /music_artist_context/);
+    assert.match(cue.text, /music_now_playing/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('World 在曲目稳定 10 秒后写入听歌记忆，并通过工具暴露关联', async () => {
   const dir = await temp();
   const realNow = Date.now;
