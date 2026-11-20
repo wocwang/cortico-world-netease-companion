@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MusicWorld } from '../src/world.ts';
 import {
-  autoLabel, autoPlayerId, configGroups, customPlayerIds, defaults, DEFAULT_AUTO_BLACKLIST, isAutoPlayer,
+  audioLimits, autoLabel, autoPlayerId, configGroups, customPlayerIds, defaults, DEFAULT_AUTO_BLACKLIST, isAutoPlayer,
   isBlacklistedApp, isInternationalPlayer, matchPlayer, parseAutoBlacklist, parseCustomPlayers, PLAYERS, playerOrder,
 } from '../src/config.ts';
 import { parseCandidates, parseSnapshot, type Track } from '../src/state.ts';
@@ -85,7 +85,8 @@ test('webUi 提供实时状态面板与快照', async () => {
   );
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
-  assert.deepEqual(reader.fields.map((field: any) => field.key), ['playerPriority', 'windowFallback', 'autoDetect', 'autoBlacklist']);
+  assert.deepEqual(reader.fields.map((field: any) => field.key),
+    ['playerPriority', 'windowFallback', 'autoDetect', 'autoBlacklist', 'audioHearing', 'audioClipSeconds', 'audioSegments']);
   assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify,apple');
   const diagnostics = await web.invoke!('reader-diagnostics', 'snapshot', []) as any;
@@ -575,4 +576,52 @@ test('配置分组只暴露官方播放器优先级与通用识别，功能标�
   assert.equal(props['worlds.netease-music.autoBlacklist'].type, 'string');
   assert.equal(props['worlds.netease-music.sessionPattern'], undefined);
   assert.equal(props['worlds.netease-music.windowFallbackProcess'], undefined);
+});
+
+test('音频陪听按开关、模型能力与已听范围决定是否附带切片', async () => {
+  const calls: number[] = [];
+  const clip = { bytes: new Uint8Array([82, 73, 70, 70]), mime: 'audio/wav' as const, name: 'clip.wav', seconds: 7,
+    fallbackText: '最近 7 秒系统声音' };
+  const hearing = {
+    capture: async (seconds: number) => { calls.push(seconds); return clip; },
+    stop: async () => {},
+  };
+  const host = (accepts: boolean) => ({ modelFacts: { accepts: (mime: string) => accepts && mime === 'audio/wav' } } as any);
+  const track = { title: '晴天', artist: '周杰伦', album: '叶惠美', player: 'netease', app: 'cloudmusic.exe',
+    status: 'playing', method: 'smtc', timeline: true, positionSeconds: 60 } as any;
+  const on = new MusicWorld({ ...defaults(), audioHearing: true, audioClipSeconds: 7 },
+    () => {}, undefined, undefined, '', hearing);
+  const opening = await (on as any).audioBlobs(false, host(true), track);
+  assert.equal(opening.blobs.length, 1);
+  assert.equal(opening.blobs[0].mime, 'audio/wav');
+  assert.equal(opening.blobs[0].bytes.length, 4);
+  assert.deepEqual(calls, [7]);
+  assert.deepEqual(opening.meta, { seconds: 7, from: 53, to: 60, estimated: false, heardBefore: [] });
+  // 同一段已经听过：不重复采集，事件里只标记 already-heard。
+  const again = await (on as any).audioBlobs(false, host(true), track);
+  assert.equal(again.blobs.length, 0);
+  assert.equal(again.meta.skipped, 'already-heard');
+  assert.deepEqual(calls, [7]);
+  // 分段默认不带音频；端点不接受音频时根本不采集。
+  assert.equal((await (on as any).audioBlobs(true, host(true), track)).blobs.length, 0);
+  assert.equal((await (on as any).audioBlobs(false, host(false), track)).blobs.length, 0);
+  assert.deepEqual(calls, [7]);
+  // 打开分段音频后才带，并带上之前听过的区间。
+  const segmented = new MusicWorld({ ...defaults(), audioHearing: true, audioSegments: true },
+    () => {}, undefined, undefined, '', hearing);
+  const first = await (segmented as any).audioBlobs(false, host(true), track);
+  assert.equal(first.blobs.length, 1);
+  assert.equal(first.meta.seconds, 7);
+  assert.deepEqual({ from: first.meta.from, to: first.meta.to }, { from: 50, to: 57 });
+  const later = { ...track, positionSeconds: 100 };
+  const second = await (segmented as any).audioBlobs(true, host(true), later);
+  assert.equal(second.blobs.length, 1);
+  assert.deepEqual(second.meta.heardBefore, [{ from: 50, to: 57 }]);
+  assert.equal(second.meta.from, 90);
+  // 总开关关闭时一律不采集。
+  const off = new MusicWorld(defaults(), () => {}, undefined, undefined, '', hearing);
+  assert.equal((await (off as any).audioBlobs(false, host(true), track)).blobs.length, 0);
+  // 切片长度限制在 5–30 秒。
+  assert.equal(audioLimits({ ...defaults(), audioClipSeconds: 99 }).seconds, 30);
+  assert.equal(audioLimits({ ...defaults(), audioClipSeconds: 1 }).seconds, 5);
 });

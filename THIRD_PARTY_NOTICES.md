@@ -35,3 +35,30 @@ SOFTWARE.
 - 许可：MIT（仅见发布包 `package.json` 的 `license` 字段；该 tarball 未附带 LICENSE 文件）
 - 用途：动作词表探测、按播放比例分段、单曲笔记、听感标签、多日历史/口味、常听曲风、切歌收尾、播放器状态提示、播放控制与搜歌的交互思路参考。
 - 说明：本项目的 `scripts/control.ps1` 针对 Windows SMTC 平台接口重写；未直接复制该包的源代码。若未来复用其代码，需要先取得其完整 MIT 版权声明与许可文本。
+
+## fateSSD/coopani-world-music（WASAPI 回环采集参考）
+
+- 仓库：https://github.com/fateSSD/coopani-world-music
+- 作者：fateSSD
+- 许可：MIT（以仓库 `package.json` 的 `license` 字段为准）
+- 用途：`scripts/audio-probe.ps1` 的 WASAPI 回环采集、环形缓冲与 PCM16 WAV 写出方式参考并改编自该仓库的 `assets/audio/probe.ps1`；本项目只保留采集与按需切片，未包含其曲风/节拍分析。
+
+Copyright (c) 2026 fateSSD
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

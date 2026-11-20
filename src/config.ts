@@ -42,6 +42,12 @@ export interface MusicConfig {
   soulEnabled: boolean;
   /** 接力点歌：她递出去的那首快结束时推荐下一首。 */
   relayPick: boolean;
+  /** 音频陪听：把最近几秒系统声音随评论事件交给支持音频输入的模型。 */
+  audioHearing: boolean;
+  /** 每次附带的音频长度（秒）；只在该次事件请求时从回环缓冲切片。 */
+  audioClipSeconds: number;
+  /** 分段事件是否也附带音频；关闭时只有开场带。 */
+  audioSegments: boolean;
 }
 export interface PlayerDef {
   id: string;
@@ -196,6 +202,7 @@ export const defaults = (): MusicConfig => ({
   listeningTrackLimit: 100, listeningArtistLimit: 30,
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
   memoryDir: '', soulEnabled: true, relayPick: true,
+  audioHearing: false, audioClipSeconds: 10, audioSegments: false,
 });
 export function listeningLimits(cfg: MusicConfig): { tracks: number; artists: number; rankTracks: number; rankArtists: number } {
   const bounded = (value: number, fallback: number, min: number, max: number) =>
@@ -222,6 +229,11 @@ export function segmentLimits(cfg: MusicConfig): { count: number; everySeconds: 
   const bounded = (value: number, fallback: number, min: number, max: number) =>
     Number.isFinite(value) ? Math.floor(Math.max(min, Math.min(max, value))) : fallback;
   return { count: bounded(cfg.segmentCount, 2, 1, 4), everySeconds: bounded(cfg.segmentEverySeconds, 60, 0, 300) };
+}
+/** 音频切片长度：5–30 秒，默认 10。 */
+export function audioLimits(cfg: MusicConfig): { seconds: number } {
+  const value = cfg.audioClipSeconds;
+  return { seconds: Number.isFinite(value) ? Math.floor(Math.max(5, Math.min(30, value))) : 10 };
 }
 const owner = 'world:netease-music' as const;
 
@@ -299,6 +311,9 @@ export const configGroups: ConfigGroup[] = [
         'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
         'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '默认关闭。开启后，官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关闭时未保存的未知播放器不参与，「连接检查」仍会列出它们的会话。', 'x-hot': false },
         'worlds.netease-music.autoBlacklist': { type: 'string', title: '通用识别黑名单（重启生效）', description: '不想让通用识别接管的软件，填应用 ID 或名称关键词（如 msteams、zoom、wemeetapp），逗号、分号或换行分隔；关键词需是完整片段，避免误伤名称相近的软件。默认已屏蔽常见会议/办公软件，可在「连接检查」一键移出。', 'x-hot': false },
+        'worlds.netease-music.audioHearing': { type: 'boolean', title: '音频陪听（重启生效）', description: '默认关闭。开启后，主动评论会附带最近几秒的系统声音（WASAPI 回环），只有当前端点支持音频输入（如开了多模态的 Gemini）时才采集；音频只随本次请求发给你配置的模型服务，临时文件用完即删。不支持音频的端点只按文字评论。', 'x-hot': false },
+        'worlds.netease-music.audioClipSeconds': { type: 'integer', title: '音频切片长度（秒）', description: '5–30，默认 10。只保留最近这么久的系统声音；越长越贵，也越容易把系统提示音带进去。', minimum: 5, maximum: 30, 'x-hot': false },
+        'worlds.netease-music.audioSegments': { type: 'boolean', title: '分段也附带音频', description: '默认关闭。关闭时只有开场评论带音频，分段只按文字与歌词；开启后每个分段事件也会附一段最近的系统声音。', 'x-hot': false },
       },
     },
   },
