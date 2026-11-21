@@ -48,6 +48,10 @@ export interface MusicConfig {
   audioClipSeconds: number;
   /** 分段事件是否也附带音频；关闭时只有开场带。 */
   audioSegments: boolean;
+  /** 外部听歌模型：把切片发给一个 OpenAI 兼容的音频端点，换回文字分析。 */
+  hearingModel: boolean;
+  hearingBaseUrl: string;
+  hearingModelName: string;
 }
 export interface PlayerDef {
   id: string;
@@ -203,6 +207,8 @@ export const defaults = (): MusicConfig => ({
   listeningRankTrackRange: 100, listeningRankArtistRange: 30,
   memoryDir: '', soulEnabled: true, relayPick: true,
   audioHearing: false, audioClipSeconds: 10, audioSegments: false,
+  hearingModel: false, hearingBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  hearingModelName: 'qwen-omni-turbo',
 });
 export function listeningLimits(cfg: MusicConfig): { tracks: number; artists: number; rankTracks: number; rankArtists: number } {
   const bounded = (value: number, fallback: number, min: number, max: number) =>
@@ -311,9 +317,19 @@ export const configGroups: ConfigGroup[] = [
         'worlds.netease-music.windowFallback': { type: 'boolean', title: '启用窗口标题降级（重启生效）', description: 'SMTC 不可用时读取官方播放器窗口标题里的「歌名 - 歌手」；无法确认暂停与播放进度，也不会匹配其他软件。', 'x-hot': false },
         'worlds.netease-music.autoDetect': { type: 'boolean', title: '通用识别（重启生效）', description: '默认关闭。开启后，官方清单之外、但向 Windows 系统媒体控件上报会话的播放器也纳入陪听（视频/图片类会话除外）。有官方或已保存的播放器正在播放时不会接管；没有时未知播放器才参与，只有它一个会话时暂停也允许兜底。可在「连接检查」把常用软件保存为支持播放器；关闭时未保存的未知播放器不参与，「连接检查」仍会列出它们的会话。', 'x-hot': false },
         'worlds.netease-music.autoBlacklist': { type: 'string', title: '通用识别黑名单（重启生效）', description: '不想让通用识别接管的软件，填应用 ID 或名称关键词（如 msteams、zoom、wemeetapp），逗号、分号或换行分隔；关键词需是完整片段，避免误伤名称相近的软件。默认已屏蔽常见会议/办公软件，可在「连接检查」一键移出。', 'x-hot': false },
+      },
+    },
+  },
+  {
+    id: 'world:netease-music:hearing', owner, schema: {
+      type: 'object', title: '音频陪听', description: '把最近几秒系统声音交给支持音频输入的模型；也可另配一个外部听歌模型。默认关闭，修改后重启 World 生效。',
+      properties: {
         'worlds.netease-music.audioHearing': { type: 'boolean', title: '音频陪听（重启生效）', description: '默认关闭。开启后，主动评论会附带最近几秒的系统声音（WASAPI 回环），只有当前端点支持音频输入（如开了多模态的 Gemini）时才采集；音频只随本次请求发给你配置的模型服务，临时文件用完即删。不支持音频的端点只按文字评论。', 'x-hot': false },
         'worlds.netease-music.audioClipSeconds': { type: 'integer', title: '音频切片长度（秒）', description: '5–30，默认 10。只保留最近这么久的系统声音；越长越贵，也越容易把系统提示音带进去。', minimum: 5, maximum: 30, 'x-hot': false },
         'worlds.netease-music.audioSegments': { type: 'boolean', title: '分段也附带音频', description: '默认关闭。关闭时只有开场评论带音频，分段只按文字与歌词；开启后每个分段事件也会附一段最近的系统声音。', 'x-hot': false },
+        'worlds.netease-music.hearingModel': { type: 'boolean', title: '外部听歌模型（重启生效）', description: '默认关闭。开启后把同一段音频切片发给下面配置的 OpenAI 兼容音频端点，换回简短的文字分析（调性/乐器/人声片段）放进评论事件；需要另填密钥。与「音频陪听」相互独立，可只开一个。', 'x-hot': false },
+        'worlds.netease-music.hearingBaseUrl': { type: 'string', title: '外部听歌模型地址', description: 'OpenAI 兼容地址，默认阿里云百炼 compatible-mode；会请求 /chat/completions。', 'x-hot': false },
+        'worlds.netease-music.hearingModelName': { type: 'string', title: '外部听歌模型名称', description: '默认 qwen-omni-turbo；也可填其他支持音频输入的模型。', 'x-hot': false },
       },
     },
   },

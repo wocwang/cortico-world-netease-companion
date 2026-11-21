@@ -11,6 +11,7 @@ import {
   playerOrder, segmentLimits, type MusicConfig,
 } from './config.ts';
 import { WindowsHearing, type HearingSource } from './hearing.ts';
+import { analyzeClip } from './cloud-hearing.ts';
 import { WindowsReader, type Reader, type ReaderDiagnostics } from './reader.ts';
 import { ListeningState, type Snapshot, type Track } from './state.ts';
 import { NeteaseComments, trackKey, type ArtistProfile, type CommentProvider, type CommentReference } from './comments.ts';
@@ -112,6 +113,12 @@ export class MusicWorld implements World {
   /** 本次 World 运行中已经真正听过（附给模型）的区间，按曲目重置。 */
   private heardKey = '';
   private heardRanges: Array<{ from: number; to: number }> = [];
+  /** 最近一次音频陪听的结果，给设置页的「当前状态」用。 */
+  private lastAudio = '';
+  /** 外部听歌模型的密钥读取/保存；装配层接到 Core 的 .env。 */
+  private hearingKey(): string {
+    return String(this.secrets?.getKey() ?? process.env.NETEASE_HEARING_API_KEY ?? '').trim();
+  }
   private lastCommented?: { track: Track; at: number };
   /** 本机上一次评论过的曲目；重启后用来接续，避免把还在放的这首当成新歌。 */
   private resumeComment?: { title: string; artist: string; album: string; at: number };
@@ -132,7 +139,8 @@ export class MusicWorld implements World {
   private focusKey = '';
   private focusUsed = new Set<FocusKey>();
   constructor(private cfg: MusicConfig, private persist: (patch: Partial<MusicConfig>) => void, reader?: Reader,
-    private comments: CommentProvider = new NeteaseComments(), preferencesDir = '', hearing?: HearingSource) {
+    private comments: CommentProvider = new NeteaseComments(), preferencesDir = '', hearing?: HearingSource,
+    private secrets?: { getKey(): string; storeKey(value: string): void; restart?(): void }) {
     this.reader = reader ?? new WindowsReader(cfg);
     this.hearing = hearing ?? new WindowsHearing();
     this.localDir = preferencesDir;
@@ -458,17 +466,44 @@ export class MusicWorld implements World {
           title: group.schema.title,
           description: group.schema.description ?? '',
           ...(players ? { players } : {}),
-          fields: Object.entries(group.schema.properties).map(([path, prop]) => {
-            const key = path.slice(prefix.length);
-            return {
-              key, title: prop.title, description: prop.description ?? '', type: prop.type,
-              minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
-              value: cfg[key] ?? null,
-            };
-          }),
+          fields: [
+            ...Object.entries(group.schema.properties).map(([path, prop]) => {
+              const key = path.slice(prefix.length);
+              return {
+                key, title: prop.title, description: prop.description ?? '', type: prop.type,
+                minimum: prop.minimum ?? null, maximum: prop.maximum ?? null, hot: prop['x-hot'] !== false,
+                value: cfg[key] ?? null,
+              };
+            }),
+            // 密钥不放进配置 JSON，只显示「已配置/未配置」；留空保存不会覆盖。
+            ...(kind === 'hearing' ? [
+              {
+                key: 'audioStatus', title: '当前状态', type: 'info', value: this.audioStatus(),
+                description: '', minimum: null, maximum: null, hot: true,
+              },
+              {
+                key: 'hearingApiKey', title: '外部听歌模型密钥', type: 'string', secret: true,
+                description: this.hearingKey()
+                  ? '已配置，保存在本机 .env；留空表示不修改。'
+                  : '未配置；填写后保存到本机 .env。',
+                minimum: null, maximum: null, hot: true, value: '',
+              },
+            ] : []),
+          ],
         };
       }),
     };
+  }
+  private audioStatus(): string {
+    const parts: string[] = [];
+    if (this.cfg.audioHearing === true) {
+      const accepts = this.host?.modelFacts?.accepts('audio/wav') === true;
+      parts.push(accepts ? '音频陪听已开启，当前端点支持音频输入' : '音频陪听已开启，但当前端点不支持音频输入，不会发送声音');
+    } else parts.push('音频陪听未开启');
+    if (this.cfg.hearingModel === true)
+      parts.push(this.hearingKey() ? `外部听歌模型：${this.cfg.hearingModelName || '未命名'}` : '外部听歌模型缺少密钥');
+    if (this.lastAudio) parts.push(`上次：${this.lastAudio}`);
+    return parts.join('；');
   }
   /** 「连接检查」只读本机进程、卸载表与 SMTC 会话，不修改任何第三方配置。 */
   private async connectionStatus(): Promise<unknown> {
@@ -658,10 +693,19 @@ export class MusicWorld implements World {
         if (panel === 'data-cleanup' && method === 'prune') return this.cleanupPrune(args?.[0]);
         if (panel === 'data-cleanup') throw new Error('未知的数据清理请求');
         if (panel === 'settings' && method === 'read') return this.settingsPayload();
+        if (panel === 'settings' && method === 'restart-world') {
+          if (!this.secrets?.restart) return { result: 'unavailable' };
+          this.secrets.restart();
+          return { result: 'restarting' };
+        }
         if (panel === 'settings' && method === 'save') {
           const patch = args[0];
           if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('设置参数无效');
-          const normalized = normalizeConfigPatch(patch as Record<string, unknown>,
+          const values = { ...(patch as Record<string, unknown>) };
+          const key = values.hearingApiKey;
+          delete values.hearingApiKey;
+          if (typeof key === 'string' && key.trim()) this.secrets?.storeKey(key.trim());
+          const normalized = normalizeConfigPatch(values,
             { saved: customPlayerIds(this.cfg.customPlayers) });
           if (Object.keys(normalized).length) {
             this.persist(normalized);
@@ -987,7 +1031,7 @@ export class MusicWorld implements World {
     this.lastStateAt = 0;
     this.lastActionAt = 0;
     this.playback = new PlaybackStateTracker();
-    if (this.cfg.audioHearing === true) this.hearing.warm?.();
+    if (this.cfg.audioHearing === true || this.cfg.hearingModel === true) this.hearing.warm?.();
     void this.ensureMigration();
     this.startReader(generation);
     this.timer = setInterval(() => { void this.tick(); }, 1000);
@@ -1314,9 +1358,14 @@ export class MusicWorld implements World {
         : null;
       if (style) this.lastActionAt = now;
       const audio = await this.audioBlobs(segmentIndex >= 0, host, track);
+      const audioNote = audio.blobs.length
+        ? 'metadata plus a short system-audio clip'
+        : audio.hearing?.status === 'ok'
+          ? 'metadata plus a text analysis of a short audio clip'
+          : 'metadata only; no audio';
       const external = await host.pushEvent({ type: 'netease-music.comment_opportunity', source: this.id,
         origin: 'external', ts: new Date(now).toISOString(), senderKey: 'local-player', tags: ['snapshot'],
-        text: JSON.stringify({ track, observation: audio.blobs.length ? 'metadata plus a short system-audio clip' : 'metadata only; no audio', observedAt: new Date(this.state.observedAt).toISOString(),
+        text: JSON.stringify({ track, observation: audioNote, observedAt: new Date(this.state.observedAt).toISOString(),
           phase: segmentIndex >= 0 ? 'segment' : 'opening',
           ...(segmentIndex >= 0 ? { segment: {
             index: segmentIndex,
@@ -1343,6 +1392,7 @@ export class MusicWorld implements World {
           }),
           lyrics: lyricsBrief }),
         ...(audio.meta ? { audio: audio.meta } : {}),
+        ...(audio.hearing ? { hearing: audio.hearing } : {}),
         ...(audio.blobs.length ? { blobs: audio.blobs } : {}),
         meta: { track, observedAt: this.state.observedAt },
       }, { trigger: 'piggyback' });
@@ -1404,15 +1454,31 @@ export class MusicWorld implements World {
     } finally { if (generation === this.generation) { this.pending = false; if (this.attempt === attempt) this.attempt = undefined; } }
   }
   /** 音频陪听：只在用户开启、当前端点接受音频、且本次事件需要时切一段。
-   *  同一首的已听区间按实际切片累积，完全覆盖的片段不再重复发送。 */
-  private async audioBlobs(segment: boolean, host: WorldHost, track: Track): Promise<{ blobs: BlobInput[]; meta?: Record<string, unknown> }> {
+   *  同一首的已听区间按实际切片累积，完全覆盖的片段不再重复发送。
+   *  外部听歌模型与主模型原声相互独立，可以只开其中一个。 */
+  private async audioBlobs(segment: boolean, host: WorldHost, track: Track):
+  Promise<{ blobs: BlobInput[]; meta?: Record<string, unknown>; hearing?: Record<string, unknown> }> {
     const none: { blobs: BlobInput[] } = { blobs: [] };
-    if (this.cfg.audioHearing !== true) return none;
     if (segment && this.cfg.audioSegments !== true) return none;
-    if (!host.modelFacts.accepts('audio/wav')) return none;
-    const key = trackKey(track);
-    if (this.heardKey !== key) {
-      this.heardKey = key;
+    if (this.cfg.audioHearing !== true && this.cfg.hearingModel !== true) return none;
+    const key = this.hearingKey();
+    const accepts = host.modelFacts?.accepts('audio/wav') === true;
+    const rawWanted = this.cfg.audioHearing === true && accepts;
+    const externalWanted = this.cfg.hearingModel === true;
+    if (!rawWanted && !externalWanted) {
+      if (this.cfg.audioHearing === true && !accepts) {
+        this.lastAudio = '当前端点不支持音频输入，未发送声音';
+        return { blobs: [], meta: { skipped: 'model-no-audio' } };
+      }
+      return none;
+    }
+    if (!rawWanted && !key) {
+      this.lastAudio = '外部听歌模型未配置密钥';
+      return { blobs: [], meta: { skipped: 'no-key' } };
+    }
+    const trackId = trackKey(track);
+    if (this.heardKey !== trackId) {
+      this.heardKey = trackId;
       this.heardRanges = [];
     }
     const { seconds } = audioLimits(this.cfg);
@@ -1424,16 +1490,36 @@ export class MusicWorld implements World {
     const base = { seconds, from: round1(from), to: round1(to), estimated };
     const heardBefore = this.heardRanges.map(range => ({ from: round1(range.from), to: round1(range.to) }));
     if (this.coveredFraction(from, to) >= 0.9) {
+      this.lastAudio = '这段已经听过，未重复发送';
       return { blobs: [], meta: { ...base, skipped: 'already-heard', heardBefore } };
     }
     const clip = await this.hearing.capture(seconds, this.abort.signal);
-    if (!clip) return { blobs: [], meta: { ...base, skipped: 'capture-failed' } };
+    if (!clip) {
+      this.lastAudio = '没有取到系统声音';
+      return { blobs: [], meta: { ...base, skipped: 'capture-failed' } };
+    }
+    let hearing: Record<string, unknown> | undefined;
+    if (externalWanted) {
+      const result = await analyzeClip(clip.bytes, clip.seconds,
+        { base: this.cfg.hearingBaseUrl, model: this.cfg.hearingModelName, key }, this.abort.signal);
+      hearing = result.ok
+        ? { status: 'ok', ...result.answer }
+        : { status: 'error', error: result.error };
+    }
+    const usable = rawWanted || hearing?.status === 'ok';
+    this.lastAudio = usable
+      ? `已附带 ${round1(clip.seconds)} 秒${hearing ? (hearing.status === 'ok' ? '，外部分析成功' : '，外部分析失败') : ''}`
+      : '声音已采集，但外部分析失败，未记录为已听';
     // 采集器刚启动时可能只有不足 N 秒；以实际切片长度为准，别把没听到的算进已听范围。
     const heardTo = Math.min(to, from + clip.seconds);
-    this.addHeard(from, heardTo);
+    if (usable) this.addHeard(from, heardTo);
     return {
-      blobs: [{ bytes: clip.bytes, mime: clip.mime, name: clip.name, fallbackText: clip.fallbackText }],
-      meta: { ...base, seconds: round1(clip.seconds), to: round1(heardTo), heardBefore },
+      ...(rawWanted ? { blobs: [{ bytes: clip.bytes, mime: clip.mime, name: clip.name, fallbackText: clip.fallbackText }] } : { blobs: [] }),
+      meta: {
+        ...base, seconds: round1(clip.seconds), to: round1(heardTo), heardBefore,
+        ...(usable ? {} : { skipped: 'hearing-failed' }),
+      },
+      ...(hearing ? { hearing } : {}),
     };
   }
 

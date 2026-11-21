@@ -17,7 +17,12 @@ const definition: WorldDefinition<MusicConfig> = {
     // 旧配置可能没有这个字段：按新默认（关闭）补齐，避免残留配置被当成开启。
     if (typeof ctx.cfg.autoDetect !== 'boolean') ctx.persist({ autoDetect: false });
   },
-  create: ctx => new MusicWorld(ctx.cfg, patch => ctx.persist(patch), undefined, undefined, ctx.dataDir ? join(ctx.dataDir, 'netease-companion') : ''),
+  create: ctx => new MusicWorld(ctx.cfg, patch => ctx.persist(patch), undefined, undefined,
+    ctx.dataDir ? join(ctx.dataDir, 'netease-companion') : '', undefined, {
+      getKey: () => ctx.secret('NETEASE_HEARING_API_KEY'),
+      storeKey: value => ctx.storeSecret('NETEASE_HEARING_API_KEY', value),
+      restart: () => ctx.restart(),
+    }),
   describe: {
     tools: describeTools(toolDecls, {
       music_now_playing: { zh: '读取当前曲目、来源与信息新鲜度。', en: 'Read current track metadata and freshness.' },
@@ -36,8 +41,8 @@ const definition: WorldDefinition<MusicConfig> = {
       music_comment_preference: { zh: '记录用户明确表达过的评论口味与主动互动频率，写入本插件独立的画像文件。', en: 'Record an explicit comment-style preference or interaction cadence in this plugin\'s own profile file.' },
     }),
     events: [{ type: 'netease-music.comment_opportunity', description: {
-      zh: '曲目稳定且满足评论间隔时，提供一次可选的陪听评论机会；按开关附带评论区摘录、歌手资料、用户画像与听歌记忆。事件带本次评论侧重 commentFocus；分段时还附带按播放比例估的段落与当前段歌词窗口，副歌可能带 style 情绪倾向（只给 label，不列动作名；动作词以桌宠环境提示词为准）。',
-      en: 'An optional commentary opportunity after track settling and cooldown, with comments, artist context, user profile and listening memory when enabled. It carries a commentFocus angle; segmented opportunities also carry an estimated song section and a lyric window around the current position, and the chorus may carry a style tendency (label only, no action names; the pet\'s own environment prompt provides the action vocabulary).',
+      zh: '曲目稳定且满足评论间隔时，提供一次可选的陪听评论机会；按开关附带评论区摘录、歌手资料、用户画像与听歌记忆。事件带本次评论侧重 commentFocus；分段时还附带按播放比例估的段落与当前段歌词窗口，副歌可能带 style 情绪倾向（只给 label，不列动作名；动作词以桌宠环境提示词为准）。开启音频陪听后，事件可能带 audio 范围、已听区间与 WAV 附件；开启外部听歌模型时另带 hearing 文字分析。',
+      en: 'An optional commentary opportunity after track settling and cooldown, with comments, artist context, user profile and listening memory when enabled. It carries a commentFocus angle; segmented opportunities also carry an estimated song section and a lyric window around the current position, and the chorus may carry a style tendency (label only, no action names; the pet\'s own environment prompt provides the action vocabulary). With audio listening on, the event may carry audio ranges, heard ranges and a WAV clip; with the external listening model on, it also carries a hearing analysis.',
     } }, { type: 'netease-music.comment_requested', description: {
       zh: '曲目与评论外部数据入队后，内部机制请求桌宠检查当前曲目并主动发言。',
       en: 'An internal mechanism cue to check current music and speak after external metadata is queued.',

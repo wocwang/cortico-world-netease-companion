@@ -12,6 +12,7 @@ export default {
           refresh: zh ? '刷新' : 'Refresh',
           autoSave: zh ? '修改后自动保存' : 'Auto-save',
           restart: zh ? '重启 World' : 'Restart World',
+          restarting: zh ? '正在重启 World…' : 'Restarting World…',
           on: zh ? '开启' : 'On',
           off: zh ? '关闭' : 'Off',
           saving: zh ? '正在保存…' : 'Saving…',
@@ -35,6 +36,15 @@ export default {
         bar.append(
           ui.pill(text.autoSave, 'plain'),
           ui.h('span', 'grow'),
+          ui.button(text.restart, { size: 'sm', variant: 'danger', onClick: async () => {
+            try {
+              status.classList.remove('bad');
+              status.textContent = text.restarting;
+              await ctx.invoke('restart-world');
+            } catch (e) {
+              invalid(text.saveFailed(e instanceof Error ? e.message : String(e)));
+            }
+          } }),
           ui.button(text.refresh, { size: 'sm', onClick: () => void load() }),
         );
         ctx.root.append(bar, host, status);
@@ -65,6 +75,10 @@ export default {
               return zh
                 ? `收录 ${get('listeningTrackLimit') ?? '—'} 首 / ${get('listeningArtistLimit') ?? '—'} 位 · 显示 ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`
                 : `Store ${get('listeningTrackLimit') ?? '—'} / ${get('listeningArtistLimit') ?? '—'} · show ${get('listeningRankTrackRange') ?? '—'} / ${get('listeningRankArtistRange') ?? '—'}`;
+            case 'hearing':
+              return zh
+                ? `音频 ${onOff(get('audioHearing'))} · ${get('audioClipSeconds') ?? '—'} 秒 · 分段音频 ${onOff(get('audioSegments'))} · 外部模型 ${onOff(get('hearingModel'))}`
+                : `Audio ${onOff(get('audioHearing'))} · ${get('audioClipSeconds') ?? '—'}s · segments ${onOff(get('audioSegments'))} · external ${onOff(get('hearingModel'))}`;
             case 'reader': {
               const stored = get('playerPriority');
               const order = Array.isArray(stored) && stored.length
@@ -256,10 +270,11 @@ export default {
           }
           if (field.type === 'string') {
             const input = ui.input({
-              type: 'text',
+              type: field.secret ? 'password' : 'text',
               value: field.value == null ? '' : String(field.value),
               onChange: changed,
             });
+            if (field.secret) input.placeholder = zh ? '已配置则留空；填写后保存到本机 .env' : 'Leave empty to keep the saved key';
             return { node: input, read: () => input.value };
           }
           return { node: ui.h('span', 'tdesc', String(field.value ?? '')), read: null };
@@ -288,7 +303,6 @@ export default {
             for (const field of group.fields) {
               const row = ui.h('div', 'trow');
               const label = ui.h('span', 'tlabel', field.title);
-              if (!field.hot) label.appendChild(ui.h('span', 'ttag', text.restart));
               const fieldWrap = ui.h('div', 'tfield');
               const built = control(group, field);
               fieldWrap.appendChild(built.node);

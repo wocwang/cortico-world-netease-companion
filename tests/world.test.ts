@@ -81,12 +81,20 @@ test('webUi 提供实时状态面板与快照', async () => {
   assert.equal(settings.groups[0].fields.find((f: any) => f.key === 'stateComments').value, true);
   assert.equal(
     settings.groups.reduce((sum: number, group: any) => sum + group.fields.length, 0),
-    configGroups.reduce((sum, group) => sum + Object.keys(group.schema.properties).length, 0),
+    configGroups.reduce((sum, group) => sum + Object.keys(group.schema.properties).length, 0) + 2,
   );
   const reader = settings.groups.find((group: any) => group.kind === 'reader');
   assert.ok(reader.fields.every((field: any) => field.hot === false));
   assert.deepEqual(reader.fields.map((field: any) => field.key),
-    ['playerPriority', 'windowFallback', 'autoDetect', 'autoBlacklist', 'audioHearing', 'audioClipSeconds', 'audioSegments']);
+    ['playerPriority', 'windowFallback', 'autoDetect', 'autoBlacklist']);
+  const hearing = settings.groups.find((group: any) => group.kind === 'hearing');
+  assert.equal(hearing.title, '音频陪听');
+  assert.deepEqual(hearing.fields.map((field: any) => field.key),
+    ['audioHearing', 'audioClipSeconds', 'audioSegments', 'hearingModel', 'hearingBaseUrl', 'hearingModelName',
+      'audioStatus', 'hearingApiKey']);
+  assert.match(hearing.fields.at(-2).value, /音频陪听未开启/);
+  assert.equal(hearing.fields.at(-1).secret, true);
+  assert.equal(hearing.fields.at(-1).value, '');
   assert.deepEqual(reader.players.map((player: any) => player.id), ['netease', 'qq', 'kugou', 'kuwo', 'spotify', 'apple']);
   assert.equal(reader.fields[0].value.join(','), 'netease,qq,kugou,kuwo,spotify,apple');
   const diagnostics = await web.invoke!('reader-diagnostics', 'snapshot', []) as any;
@@ -602,9 +610,11 @@ test('音频陪听按开关、模型能力与已听范围决定是否附带切�
   assert.equal(again.blobs.length, 0);
   assert.equal(again.meta.skipped, 'already-heard');
   assert.deepEqual(calls, [7]);
-  // 分段默认不带音频；端点不接受音频时根本不采集。
+  // 分段默认不带音频；端点不接受音频时说明原因，不静默失败。
   assert.equal((await (on as any).audioBlobs(true, host(true), track)).blobs.length, 0);
-  assert.equal((await (on as any).audioBlobs(false, host(false), track)).blobs.length, 0);
+  const noAudio = await (on as any).audioBlobs(false, host(false), track);
+  assert.equal(noAudio.blobs.length, 0);
+  assert.equal(noAudio.meta.skipped, 'model-no-audio');
   assert.deepEqual(calls, [7]);
   // 打开分段音频后才带，并带上之前听过的区间。
   const segmented = new MusicWorld({ ...defaults(), audioHearing: true, audioSegments: true },
